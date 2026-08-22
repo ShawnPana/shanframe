@@ -45,18 +45,27 @@ func main() {
 	case "join":
 		server := "https://api.shanframe.com"
 		name := ""
+		noInstall := false
 		rest := os.Args[2:]
 		for i := 0; i < len(rest); i++ {
-			if rest[i] == "--name" && i+1 < len(rest) {
+			switch {
+			case rest[i] == "--name" && i+1 < len(rest):
 				name = rest[i+1]
 				i++
-			} else {
+			case rest[i] == "--no-install":
+				noInstall = true
+			default:
 				server = rest[i]
 			}
 		}
 		var c Config
 		if c, err = join(server, name); err == nil {
-			fmt.Printf("linked: this machine is %q on your shanframe\nnext: shanframe install\n", c.Name)
+			fmt.Printf("linked: this machine is %q on your shanframe\n", c.Name)
+			if noInstall {
+				fmt.Println("next: shanframe install")
+			} else {
+				err = install()
+			}
 		}
 	case "serve":
 		err = serve()
@@ -202,7 +211,7 @@ func stripDashes(a []string) []string {
 
 func usage() {
 	fmt.Fprintln(os.Stderr, `usage: shanframe <command>
-  join [server] [--name X]           link this machine to your account
+  join [--name X] [--no-install]     link this machine to your account and start the service
   install | uninstall                run as a service / remove the service
   serve                              run in the foreground
   ls [--json]                        your devices (and what each offers)
