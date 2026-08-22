@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -41,6 +42,12 @@ type agent struct {
 	conns    map[string]*peer.Conn // session → connection
 	stops    map[string]func()     // session → screen-capture teardown
 }
+
+// osPretty and hwModel are collected once: cheap probes, stable answers.
+var (
+	osPretty = setup.OSPretty()
+	hwModel  = setup.Model()
+)
 
 func serve() error {
 	update.Guard(30 * time.Second) // confirm this build alive, or roll back
@@ -154,6 +161,7 @@ func (a *agent) device() *rendezvous.Device {
 		}
 	}
 	return &rendezvous.Device{ID: a.cfg.DeviceID, Name: a.cfg.Name, OS: osName(),
+		OSName: osPretty, Arch: runtime.GOARCH, Model: hwModel, Build: build,
 		Screen: a.screen.Ready, Native: nativeScreen(),
 		Note: a.screen.Note, Auth: a.screen.Auth, Asleep: a.asleep, Services: services}
 }

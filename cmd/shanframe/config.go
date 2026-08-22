@@ -80,6 +80,7 @@ func join(server, name string) (Config, error) {
 	}
 	appURL := strings.Replace(server, "://api.", "://app.", 1)
 	fmt.Printf("\n  On a device where you're signed in, open  %s/link\n  and enter this code:\n\n      %s\n\n  waiting…\n", appURL, start.Code)
+	openBrowser(appURL + "/link?code=" + start.Code) // best effort: signed-in browser on this machine approves in one click
 	deadline := time.Now().Add(10 * time.Minute)
 	for time.Now().Before(deadline) {
 		wr, err := http.Get(server + "/v1/link/wait?poll=" + start.Poll)
@@ -119,6 +120,19 @@ func (c Config) wsURL() string {
 // the name its owner already knows it by. macOS: the computer name from
 // Sharing ("Shawn's MacBook Pro"). Single-board computers: the board model
 // ("Raspberry Pi 5"). Everything else: the hostname.
+// openBrowser opens url in the machine's browser when there is one; silent
+// otherwise (headless boxes just use the printed code).
+func openBrowser(url string) {
+	switch runtime.GOOS {
+	case "darwin":
+		exec.Command("open", url).Start()
+	case "linux":
+		if os.Getenv("DISPLAY") != "" || os.Getenv("WAYLAND_DISPLAY") != "" {
+			exec.Command("xdg-open", url).Start()
+		}
+	}
+}
+
 func defaultName() string {
 	switch runtime.GOOS {
 	case "darwin":

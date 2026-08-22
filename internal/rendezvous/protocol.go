@@ -22,6 +22,10 @@ type Device struct {
 	Note     string   `json:"note,omitempty"`     // why not, in plain words
 	Services []string `json:"services,omitempty"` // what the device offers right now: shell, exec, screen, input, …
 	StartCmd string   `json:"startCmd,omitempty"` // account setting: typed into every new terminal on this device
+	OSName   string   `json:"osName,omitempty"`   // pretty OS: "macOS 26.5", "Debian 12 (bookworm)"
+	Arch     string   `json:"arch,omitempty"`     // arm64 / amd64
+	Model    string   `json:"model,omitempty"`    // hardware: "MacBook Pro (Mac16,6)", "Raspberry Pi 5"
+	Build    string   `json:"build,omitempty"`    // agent build (git sha)
 	Auth     string   `json:"auth,omitempty"`     // "account" when the viewer signs in with the device's account
 }
 
