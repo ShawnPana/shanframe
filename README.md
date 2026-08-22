@@ -1,8 +1,8 @@
 <!-- LOGO -->
 <h1>
 <p align="center">
-  <img src="assets/shanframe.png" alt="shanframe" width="120">
-  <br>shanframe
+  <a href="https://shanframe.com"><img src="assets/shanframe.png" alt="shanframe" width="120"></a>
+  <br><a href="https://shanframe.com">shanframe</a>
 </h1>
   <p align="center">
     Your machines, from anywhere — for you <em>and</em> your agents.
@@ -17,7 +17,7 @@
     ·
     <a href="#use">Use</a>
     ·
-    <a href="#for-agents">For agents</a>
+    <a href="#for-agents">For Agents</a>
   </p>
 </p>
 
@@ -66,7 +66,7 @@ shanframe <dev> screenshot|click|type|key|batch   # see and operate its screen
 shanframe <dev> startcmd 'tmux attach'            # what every new terminal runs
 ```
 
-## For agents
+## For Agents
 
 [`skills/shanframe/SKILL.md`](skills/shanframe/SKILL.md) is a ready-made
 skill for coding agents (Claude Code and friends): list devices, run
