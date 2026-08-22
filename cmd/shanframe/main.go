@@ -405,7 +405,14 @@ func ls(asJSON bool) error {
 		if d.ID == c.cfg.DeviceID {
 			me = "  (this device)"
 		}
-		fmt.Printf("%-16s %-8s %s%s\n", d.Name, d.OS, state, me)
+		osCol := d.OSName
+		if osCol == "" {
+			osCol = d.OS
+		}
+		if d.Model != "" {
+			osCol += " · " + d.Model
+		}
+		fmt.Printf("%-16s %-40s %s%s\n", d.Name, osCol, state, me)
 	}
 	return nil
 }
