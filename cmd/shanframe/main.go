@@ -3,7 +3,7 @@
 //
 //	shanframe join <server> <token> [--name X]  point this device at your server
 //	shanframe serve                              run as a device (foreground)
-//	shanframe install                            run `serve` as a service (boot/login)
+//	shanframe up                                 run `serve` as a service (boot/login)
 //	shanframe down                               stop and remove the service
 //	shanframe ls                                 list your devices
 //	shanframe <device>                           open a shell on that device
@@ -387,7 +387,7 @@ func ls(asJSON bool) error {
 		return enc.Encode(devs)
 	}
 	if len(devs) == 0 {
-		fmt.Println("no devices yet — run `shanframe join` + `shanframe install` on a computer")
+		fmt.Println("no devices yet — run `shanframe join` on a computer")
 		return nil
 	}
 	for _, d := range devs {
