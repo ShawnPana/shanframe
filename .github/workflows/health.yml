@@ -1,0 +1,16 @@
+name: health
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: api.shanframe.com is up
+        run: |
+          for i in 1 2 3; do
+            body=$(curl -fsS -m 10 https://api.shanframe.com/v1/health) && [ "$body" = "ok" ] && exit 0
+            sleep 20
+          done
+          echo "health check failed: '$body'"; exit 1
