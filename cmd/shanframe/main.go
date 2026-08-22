@@ -4,7 +4,7 @@
 //	shanframe join <server> <token> [--name X]  point this device at your server
 //	shanframe serve                              run as a device (foreground)
 //	shanframe install                            run `serve` as a service (boot/login)
-//	shanframe uninstall                          remove the service
+//	shanframe down                               stop and remove the service
 //	shanframe ls                                 list your devices
 //	shanframe <device>                           open a shell on that device
 package main
@@ -62,16 +62,16 @@ func main() {
 		if c, err = join(server, name); err == nil {
 			fmt.Printf("linked: this machine is %q on your shanframe\n", c.Name)
 			if noInstall {
-				fmt.Println("next: shanframe install")
+				fmt.Println("next: shanframe up")
 			} else {
 				err = install()
 			}
 		}
 	case "serve":
 		err = serve()
-	case "install":
+	case "up":
 		err = install()
-	case "uninstall":
+	case "down":
 		if err = setup.UninstallService(); err == nil {
 			fmt.Println("removed", setup.ServiceDescription())
 		}
@@ -212,7 +212,7 @@ func stripDashes(a []string) []string {
 func usage() {
 	fmt.Fprintln(os.Stderr, `usage: shanframe <command>
   join [--name X] [--no-install]     link this machine to your account and start the service
-  install | uninstall                run as a service / remove the service
+  up | down                          run as a background service / stop and remove it
   serve                              run in the foreground
   ls [--json]                        your devices (and what each offers)
   <device>                           shell on that device (name prefix works)
@@ -632,7 +632,7 @@ func rm(target string) error {
 		return err
 	}
 	if dev.Online {
-		return fmt.Errorf("%s is online — run `shanframe uninstall` on it first", dev.Name)
+		return fmt.Errorf("%s is online — run `shanframe down` on it first", dev.Name)
 	}
 	session := fmt.Sprintf("rm-%d", time.Now().UnixNano())
 	done := make(chan error, 1)
