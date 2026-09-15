@@ -64,6 +64,7 @@ shanframe <dev> tunnel 5432        # its port, local here (--socks, --install)
 shanframe <dev> cdp                # its Chrome DevTools, local here
 shanframe <dev> screenshot|click|type|key|batch   # see and operate its screen
 shanframe <dev> startcmd 'tmux attach'            # what every new terminal runs
+shanframe completion install       # tab completion for bash/zsh/fish (`up` does this too)
 ```
 
 ## For Agents

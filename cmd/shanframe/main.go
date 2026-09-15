@@ -35,18 +35,31 @@ import (
 var build = "dev"
 
 func main() {
-	if len(os.Args) < 2 {
+	if err := newRootCmd().Execute(); err != nil {
+		var code exitCode
+		if errors.As(err, &code) {
+			os.Exit(int(code))
+		}
+		fmt.Fprintln(os.Stderr, "shanframe:", err)
+		os.Exit(1)
+	}
+}
+
+// dispatch runs one command line (argv[0] is the program) — the verbs and
+// their argument shapes, independent of how cobra routed here.
+func dispatch(argv []string) error {
+	if len(argv) < 2 {
 		usage()
 	}
 	var err error
-	switch os.Args[1] {
+	switch argv[1] {
 	case update.ProbeArg: // update preflight: prove the binary starts, exit 0
-		return
+		return nil
 	case "join":
 		server := "https://api.shanframe.com"
 		name := ""
 		noInstall := false
-		rest := os.Args[2:]
+		rest := argv[2:]
 		for i := 0; i < len(rest); i++ {
 			switch {
 			case rest[i] == "--name" && i+1 < len(rest):
@@ -74,34 +87,35 @@ func main() {
 	case "down":
 		if err = setup.UninstallService(); err == nil {
 			fmt.Println("removed", setup.ServiceDescription())
+			err = uninstallCompletion()
 		}
 	case "ls":
-		err = ls(len(os.Args) > 2 && os.Args[2] == "--json")
+		err = ls(len(argv) > 2 && argv[2] == "--json")
 	case "rm":
-		if len(os.Args) < 3 {
+		if len(argv) < 3 {
 			usage()
 		}
-		err = rm(strings.Join(os.Args[2:], " "))
+		err = rm(strings.Join(argv[2:], " "))
 	case "rename":
-		if len(os.Args) < 3 {
+		if len(argv) < 3 {
 			usage()
 		}
-		err = rename(strings.Join(os.Args[2:], " "))
+		err = rename(strings.Join(argv[2:], " "))
 	case "startcmd": // startcmd <device> [value…|--clear]
-		if len(os.Args) < 3 {
+		if len(argv) < 3 {
 			usage()
 		}
-		err = startcmd(os.Args[2], os.Args[3:])
+		err = startcmd(argv[2], argv[3:])
 	case "connect":
-		if len(os.Args) < 3 {
+		if len(argv) < 3 {
 			usage()
 		}
-		err = connect(os.Args[2])
+		err = connect(argv[2])
 	case "run": // run <device> -- cmd
-		if len(os.Args) < 4 {
+		if len(argv) < 4 {
 			usage()
 		}
-		err = run(os.Args[2], stripDashes(os.Args[3:]))
+		err = run(argv[2], stripDashes(argv[3:]))
 	case "tunnels": // kept tunnels on this machine
 		ts := loadTunnels()
 		if len(ts) == 0 {
@@ -111,16 +125,16 @@ func main() {
 			fmt.Printf("%-20s %s\n", t.Device, strings.Join(t.Forwards, "  "))
 		}
 	case "tunnel": // tunnel <device> <spec>... | --socks <port>
-		if len(os.Args) < 4 {
+		if len(argv) < 4 {
 			usage()
 		}
-		err = tunnel(os.Args[2], os.Args[3:])
+		err = tunnel(argv[2], argv[3:])
 	case "_screencap": // hidden: capture N seconds of H.264 to a file (debug)
-		err = screencapDebug(os.Args[2:])
+		err = screencapDebug(argv[2:])
 	case "-h", "--help", "help":
 		usage()
 	default: // <device> [action ...]
-		target, rest := os.Args[1], os.Args[2:]
+		target, rest := argv[1], argv[2:]
 		switch {
 		case len(rest) == 0, rest[0] == "term":
 			err = connect(target)
@@ -144,14 +158,7 @@ func main() {
 			err = fmt.Errorf("unknown action %q for %s (actions: term, run, tunnel, cdp, screenshot, click, tap, drag, scroll, type, key, size, batch)", rest[0], target)
 		}
 	}
-	if err != nil {
-		var code exitCode
-		if errors.As(err, &code) {
-			os.Exit(int(code))
-		}
-		fmt.Fprintln(os.Stderr, "shanframe:", err)
-		os.Exit(1)
-	}
+	return err
 }
 
 var screenVerbs = map[string]bool{"screenshot": true, "size": true, "click": true, "tap": true, "rightclick": true,
@@ -227,7 +234,8 @@ func usage() {
   <device> cdp [--port N] [--local N]   its Chrome's DevTools as localhost here; prints CDP_WS/CDP_URL to use
   <device> startcmd [CMD | --clear]  what every new terminal on it runs first (account-wide); no args shows it
   rm <device>                        remove a device from your list (offline only)
-  rename <new-name>                  rename this machine`)
+  rename <new-name>                  rename this machine
+  completion install|uninstall       tab completion for device names and verbs (bash/zsh/fish; up installs it)`)
 	os.Exit(2)
 }
 
@@ -249,6 +257,11 @@ func install() error {
 		return err
 	}
 	fmt.Printf("installed %s\n  runs: %s serve\n  log:  %s\n", setup.ServiceDescription(), exe, setup.LogHint(logPath))
+	if note, err := installCompletion(newRootCmd()); err != nil {
+		fmt.Println("  (tab completion not set up:", err, "— `shanframe completion install` to retry)")
+	} else if note != "" {
+		fmt.Println(" ", note)
+	}
 	waitForReady()
 	return nil
 }
@@ -331,6 +344,10 @@ type client struct {
 }
 
 func newClient() (*client, context.CancelFunc, error) {
+	return newClientTimeout(15 * time.Second)
+}
+
+func newClientTimeout(wait time.Duration) (*client, context.CancelFunc, error) {
 	cfg, err := loadConfig()
 	if err != nil {
 		return nil, nil, err
@@ -344,11 +361,12 @@ func newClient() (*client, context.CancelFunc, error) {
 	go c.rz.Run(ctx)
 	select {
 	case devs := <-c.devs:
+		cacheDeviceNames(devs) // for tab completion when the server can't be reached
 		c.devs <- devs
 	case <-unauth:
 		cancel()
 		return nil, nil, rendezvous.ErrUnauthorized
-	case <-time.After(15 * time.Second):
+	case <-time.After(wait):
 		cancel()
 		return nil, nil, fmt.Errorf("can't reach %s", cfg.Server)
 	}
