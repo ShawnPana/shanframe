@@ -18,6 +18,7 @@ import (
 
 	"github.com/pion/webrtc/v4"
 
+	"github.com/shawnpana/shanframe/internal/android"
 	"github.com/shawnpana/shanframe/internal/frame"
 	"github.com/shawnpana/shanframe/internal/peer"
 	"github.com/shawnpana/shanframe/internal/power"
@@ -121,6 +122,12 @@ func serve() error {
 	}()
 	keepTunnels()
 	if os.Getenv("SHANFRAME_NO_UPDATE") == "" { // dev knob: run a local build without it being replaced
+		if runtime.GOOS == "linux" && !android.Available() && setup.ServiceInstalled() {
+			// a systemd-run agent whose binary sits somewhere it can't write
+			// (install.sh's /usr/local/bin) reinstalls itself from a place it can
+			logPath := filepath.Join(configDir(), "serve.log")
+			update.Relocate = func(exe string) error { return setup.InstallService(exe, logPath) }
+		}
 		go update.Loop(cfg.Server, cfg.Token, "shanframe", 5*time.Minute, a.busy)
 	}
 	log.Printf("shanframe %q (build %s) → %s", cfg.Name, build, cfg.Server)

@@ -66,6 +66,22 @@ func InstallService(exe, logPath string) error {
 	if err != nil {
 		return err
 	}
+	// The service runs as this user, so its binary must live where this user
+	// can write, or it can never update itself. stateDir is the config dir.
+	owned, moved, err := OwnBinary(exe, filepath.Dir(logPath))
+	if err != nil {
+		return err
+	}
+	if moved {
+		fmt.Printf("agent binary: %s (a place it can update itself)\n", owned)
+		if haveRoot() {
+			if err := runAsRoot("ln", "-sfn", owned, exe); err == nil {
+				fmt.Printf("  %s now points there, so the command stays current\n", exe)
+			}
+		}
+		exe = owned
+	}
+	wasInstalled := installedMode() != ""
 	if haveRoot() {
 		unit := fmt.Sprintf(`[Unit]
 Description=shanframe agent
@@ -88,7 +104,13 @@ WantedBy=multi-user.target
 		if err := runAsRoot("systemctl", "daemon-reload"); err != nil {
 			return err
 		}
-		return runAsRoot("systemctl", "--no-block", "enable", "--now", "shanframe")
+		if err := runAsRoot("systemctl", "--no-block", "enable", "--now", "shanframe"); err != nil {
+			return err
+		}
+		if wasInstalled { // enable --now leaves a running unit on the old ExecStart
+			return runAsRoot("systemctl", "--no-block", "restart", "shanframe")
+		}
+		return nil
 	}
 	// user unit: no root needed; linger keeps it alive when you log out
 	unit := fmt.Sprintf(`[Unit]
@@ -116,9 +138,15 @@ WantedBy=default.target
 	if out, err := exec.Command("systemctl", "--user", "--no-block", "enable", "--now", "shanframe").CombinedOutput(); err != nil {
 		return fmt.Errorf("systemctl --user enable: %v: %s", err, out)
 	}
+	if wasInstalled {
+		exec.Command("systemctl", "--user", "--no-block", "restart", "shanframe").Run()
+	}
 	exec.Command("loginctl", "enable-linger", u.Username).Run() // best effort; without it the agent runs while you're logged in
 	return nil
 }
+
+// ServiceInstalled reports whether a service manager runs the agent here.
+func ServiceInstalled() bool { return android.Available() || installedMode() != "" }
 
 func LogHint(logPath string) string {
 	if android.Available() {

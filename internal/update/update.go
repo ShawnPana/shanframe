@@ -231,6 +231,23 @@ func Restart() {
 	syscall.Exec(exe, os.Args, os.Environ())
 }
 
+// DirWritable reports whether this process can create files in dir — what
+// an update needs, since the new build is written beside the old one.
+func DirWritable(dir string) bool {
+	f, err := os.CreateTemp(dir, ".shanframe-w-*")
+	if err != nil {
+		return false
+	}
+	f.Close()
+	os.Remove(f.Name())
+	return true
+}
+
+// Relocate, when set, is asked to move the agent somewhere it can update
+// itself (and restart it from there) once Loop finds it can't write beside
+// its own binary. Installed by serve where a service manager is in charge.
+var Relocate func(exe string) error
+
 // Loop checks every interval and applies updates. Blocks. busy reports
 // whether live sessions would be cut by a restart; updates wait for quiet.
 func Loop(server, token, bin string, interval time.Duration, busy func() bool) {
@@ -242,6 +259,21 @@ func Loop(server, token, bin string, interval time.Duration, busy func() bool) {
 	var waitingSince time.Time
 	for {
 		wait := interval
+		if !DirWritable(filepath.Dir(exe)) {
+			if Relocate == nil {
+				log.Printf("update: can't write beside %s — this agent cannot update itself; run `shanframe up` to fix", exe)
+				time.Sleep(time.Hour)
+				continue
+			}
+			log.Printf("update: can't write beside %s — moving the agent where it can update itself", exe)
+			if err := Relocate(exe); err != nil {
+				log.Printf("update: relocate: %v", err)
+				time.Sleep(time.Hour)
+				continue
+			}
+			time.Sleep(interval) // the service manager is restarting us from the new place
+			continue
+		}
 		mine, err := fileSHA(exe)
 		if err == nil {
 			want, err := Check(server, token, bin)

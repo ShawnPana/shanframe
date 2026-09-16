@@ -72,3 +72,6 @@ func LogHint(logPath string) string { return logPath }
 func RestartService() error {
 	return exec.Command("launchctl", "kickstart", "-k", fmt.Sprintf("gui/%d/%s", os.Getuid(), label)).Run()
 }
+
+// ServiceInstalled reports whether a service manager runs the agent here.
+func ServiceInstalled() bool { return false }
