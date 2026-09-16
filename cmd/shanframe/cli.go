@@ -21,6 +21,7 @@ import (
 
 // actionFlags is what each device action accepts after its positional args.
 var actionFlags = map[string][]string{
+	"run":        {"--shell"},
 	"tunnel":     {"--socks", "--install", "--uninstall"},
 	"cdp":        {"--port", "--local", "--json"},
 	"startcmd":   {"--clear"},
@@ -73,11 +74,14 @@ func newRootCmd() *cobra.Command {
 		verb("run", completeDeviceArg),
 		verb("tunnel", completeDeviceArg),
 		verb("startcmd", completeDeviceArg),
+		verb("pair", flagsOnly()),
 		completionCmd(root),
 	)
-	screencap := verb("_screencap", flagsOnly())
-	screencap.Hidden = true
-	root.AddCommand(screencap)
+	for _, hidden := range []string{"_screencap", "_broker"} {
+		h := verb(hidden, flagsOnly())
+		h.Hidden = true
+		root.AddCommand(h)
+	}
 	return root
 }
 

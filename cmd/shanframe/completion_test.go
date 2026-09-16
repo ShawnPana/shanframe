@@ -47,8 +47,11 @@ func TestCompletion(t *testing.T) {
 			t.Errorf("top level lacks %q: %q", verb, got)
 		}
 	}
-	if has(got, "_screencap") {
+	if has(got, "_screencap") || has(got, "_broker") {
 		t.Error("hidden verb offered")
+	}
+	if !has(got, "pair") {
+		t.Error("pair not offered")
 	}
 	got = complete(t, "Raspberry Pi 5", "")
 	for _, a := range []string{"run", "tunnel", "cdp", "startcmd", "screenshot", "click", "dblclick", "key", "batch"} {

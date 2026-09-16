@@ -120,7 +120,9 @@ func serve() error {
 		cancel()
 	}()
 	keepTunnels()
-	go update.Loop(cfg.Server, cfg.Token, "shanframe", 5*time.Minute, a.busy)
+	if os.Getenv("SHANFRAME_NO_UPDATE") == "" { // dev knob: run a local build without it being replaced
+		go update.Loop(cfg.Server, cfg.Token, "shanframe", 5*time.Minute, a.busy)
+	}
 	log.Printf("shanframe %q (build %s) → %s", cfg.Name, build, cfg.Server)
 	a.rz.Run(ctx)
 	return nil
@@ -203,12 +205,16 @@ func (a *agent) onMsg(m rendezvous.Msg) {
 		ice := a.ice
 		a.mu.Unlock()
 		from, session := m.From, m.Session
+		a.mu.Lock()
+		screenReady := a.screen.Ready
+		a.mu.Unlock()
 		var video func(*webrtc.PeerConnection) error
-		if nativeScreen() {
+		if nativeScreen() && screenReady {
 			video = func(pc *webrtc.PeerConnection) error {
 				stop, err := attachScreen(pc)
-				if err != nil {
-					return err
+				if err != nil { // terminal and exec still work; the viewer shows no picture
+					log.Printf("session %s: screen: %v", session, err)
+					return nil
 				}
 				a.mu.Lock()
 				a.stops[session] = stop
@@ -268,6 +274,10 @@ func (a *agent) handleStream(open rendezvous.Open, s io.ReadWriteCloser) {
 		frame.Write(s, frame.Data, b)
 		return
 	case "exec":
+		if open.Priv {
+			servePrivExec(s, open.Cmd)
+			return
+		}
 		serveExec(s, open.Cmd)
 	case "tunnel": // control stream: stays open for the life of a tunnel session
 		log.Printf("tunnel →")

@@ -24,6 +24,17 @@ served at /static/novnc/LICENSE.txt.
 Copyright (C) 2014-2017 by Vitaly Puzrin and Andrei Tuputcyn (https://github.com/nodeca/pako).
 
 
+## Android screen sharing
+
+
+### scrcpy server 4.1 — Apache License 2.0
+Copyright (C) 2018 Genymobile, Copyright (C) 2018-2025 Romain Vimont
+(https://github.com/Genymobile/scrcpy). shanframe's Linux agent embeds the
+unmodified scrcpy server (`scrcpy-server`) and runs it on Android phones to
+capture the screen and inject input. Licensed under the Apache License,
+Version 2.0; the full text is reproduced under "Apache License" below.
+
+
 ## Go modules
 
 

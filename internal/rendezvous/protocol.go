@@ -12,21 +12,22 @@ const (
 
 // Device is what the server knows about a registered device.
 type Device struct {
-	ID       string   `json:"id"`
-	Name     string   `json:"name"`
-	OS       string   `json:"os"`
-	Online   bool     `json:"online"`
-	Asleep   bool     `json:"asleep,omitempty"`   // offline because the machine is sleeping; back on wake
-	Screen   bool     `json:"screen"`             // desktop available
-	Native   bool     `json:"native,omitempty"`   // desktop is native capture (H.264 track), not VNC
-	Note     string   `json:"note,omitempty"`     // why not, in plain words
-	Services []string `json:"services,omitempty"` // what the device offers right now: shell, exec, screen, input, …
-	StartCmd string   `json:"startCmd,omitempty"` // account setting: typed into every new terminal on this device
-	OSName   string   `json:"osName,omitempty"`   // pretty OS: "macOS 26.5", "Debian 12 (bookworm)"
-	Arch     string   `json:"arch,omitempty"`     // arm64 / amd64
-	Model    string   `json:"model,omitempty"`    // hardware: "MacBook Pro (Mac16,6)", "Raspberry Pi 5"
-	Build    string   `json:"build,omitempty"`    // agent build (git sha)
-	Auth     string   `json:"auth,omitempty"`     // "account" when the viewer signs in with the device's account
+	ID         string   `json:"id"`
+	Name       string   `json:"name"`
+	OS         string   `json:"os"`
+	Online     bool     `json:"online"`
+	Asleep     bool     `json:"asleep,omitempty"`     // offline because the machine is sleeping; back on wake
+	Screen     bool     `json:"screen"`               // desktop available
+	Native     bool     `json:"native,omitempty"`     // desktop is native capture (H.264 track), not VNC
+	Note       string   `json:"note,omitempty"`       // why not, in plain words
+	TargetOnly bool     `json:"targetOnly,omitempty"` // reachable, but its key can't control other devices
+	Services   []string `json:"services,omitempty"`   // what the device offers right now: shell, exec, screen, input, …
+	StartCmd   string   `json:"startCmd,omitempty"`   // account setting: typed into every new terminal on this device
+	OSName     string   `json:"osName,omitempty"`     // pretty OS: "macOS 26.5", "Debian 12 (bookworm)"
+	Arch       string   `json:"arch,omitempty"`       // arm64 / amd64
+	Model      string   `json:"model,omitempty"`      // hardware: "MacBook Pro (Mac16,6)", "Raspberry Pi 5"
+	Build      string   `json:"build,omitempty"`      // agent build (git sha)
+	Auth       string   `json:"auth,omitempty"`       // "account" when the viewer signs in with the device's account
 }
 
 // Msg is every message on the socket. Type decides which fields matter.
@@ -76,6 +77,7 @@ type Open struct {
 	Cols    int    `json:"cols,omitempty"`
 	Rows    int    `json:"rows,omitempty"`
 	Cmd     string `json:"cmd,omitempty"`  // exec: one command line, run by the device's login shell
+	Priv    bool   `json:"priv,omitempty"` // exec: as the device's privileged helper (Android: the shell user)
 	Host    string `json:"host,omitempty"` // tcp: dial this host (resolved on the device) …
 	Port    int    `json:"port,omitempty"` // … and port; the stream is the raw TCP bytes after one status byte
 

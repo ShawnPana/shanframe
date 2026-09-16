@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/shawnpana/shanframe/internal/android"
 	"io"
 	"strings"
 	"sync"
@@ -32,6 +33,9 @@ func api() *webrtc.API {
 		}
 		return true
 	})
+	if android.Available() { // apps may not enumerate interfaces there; see phonenet.go
+		se.SetNet(newPhoneNet())
+	}
 	return webrtc.NewAPI(webrtc.WithSettingEngine(se))
 }
 

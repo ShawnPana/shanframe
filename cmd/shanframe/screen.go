@@ -95,7 +95,8 @@ type screenEvent struct {
 func serveScreenInput(s io.ReadWriter) error {
 	if !input.Supported() || !input.Authorized() {
 		// not fatal: view-only is still useful; the page shows the note
-		frame.Write(s, frame.Data, []byte(`{"t":"noinput","note":"view only — allow Accessibility for shanframe on this Mac"}`))
+		note, _ := json.Marshal(map[string]string{"t": "noinput", "note": input.Note()})
+		frame.Write(s, frame.Data, note)
 	}
 	inj := input.New()
 	defer inj.ReleaseAll()

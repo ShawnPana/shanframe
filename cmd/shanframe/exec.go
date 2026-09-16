@@ -13,6 +13,7 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/shawnpana/shanframe/internal/android"
 	"github.com/shawnpana/shanframe/internal/frame"
 	"github.com/shawnpana/shanframe/internal/ptyx"
 )
@@ -92,4 +93,35 @@ func serveExec(s io.ReadWriteCloser, cmdline string) {
 	binary.BigEndian.PutUint32(b[:], uint32(code))
 	write(frame.Exit, b[:])
 	log.Printf("exec ← exit %d", code)
+}
+
+// servePrivExec runs one command line as the device's privileged helper —
+// on Android the shell user, through the broker (internal/android): what
+// `adb shell` would run, without adb. Output is collected, not streamed.
+func servePrivExec(s io.ReadWriteCloser, cmdline string) {
+	if cmdline == "" {
+		frame.Write(s, frame.Error, []byte("exec: no command"))
+		return
+	}
+	if !android.Available() {
+		frame.Write(s, frame.Error, []byte("run --shell is for Android phones"))
+		return
+	}
+	log.Printf("exec(shell) → %q", cmdline)
+	out, code, err := android.ShellExec(cmdline)
+	if err != nil && code == 0 {
+		frame.Write(s, frame.Error, []byte("exec: "+err.Error()))
+		return
+	}
+	if len(out) > 0 {
+		for len(out) > 0 {
+			n := min(len(out), 32<<10)
+			frame.Write(s, frame.Data, out[:n])
+			out = out[n:]
+		}
+	}
+	var b [4]byte
+	binary.BigEndian.PutUint32(b[:], uint32(code))
+	frame.Write(s, frame.Exit, b[:])
+	log.Printf("exec(shell) ← exit %d", code)
 }

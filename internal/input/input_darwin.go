@@ -82,7 +82,10 @@ type Injector struct {
 	clicks               int
 }
 
-func Supported() bool  { return true }
+func Supported() bool { return true }
+
+// Note explains view-only mode in the viewer, in plain words.
+func Note() string     { return "view only — allow Accessibility for shanframe on this Mac" }
 func Authorized() bool { return C.sfAXTrusted(0) != 0 }
 
 // RequestPermission shows the macOS Accessibility prompt (once per app).

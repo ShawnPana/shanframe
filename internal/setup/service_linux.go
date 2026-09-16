@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+
+	"github.com/shawnpana/shanframe/internal/android"
 )
 
 // Linux service install picks the best supervisor that's actually available,
@@ -47,6 +49,16 @@ func installedMode() string {
 }
 
 func InstallService(exe, logPath string) error {
+	if android.Available() {
+		hadBoot := hasTermuxBoot()
+		if err := installAndroid(exe, logPath); err != nil {
+			return err
+		}
+		if !hadBoot {
+			fmt.Println("note: install the Termux:Boot add-on (F-Droid) so shanframe starts after a restart; until then run `shanframe up` again after rebooting")
+		}
+		return nil
+	}
 	if !haveSystemd() {
 		return errors.New("no systemd on this machine — run `shanframe serve` under tmux/screen, or add it to your init system; it keeps itself connected and updated")
 	}
@@ -109,6 +121,9 @@ WantedBy=default.target
 }
 
 func LogHint(logPath string) string {
+	if android.Available() {
+		return logPath
+	}
 	if installedMode() == "user" {
 		return "journalctl --user -u shanframe -f"
 	}
@@ -116,6 +131,9 @@ func LogHint(logPath string) string {
 }
 
 func UninstallService() error {
+	if android.Available() {
+		return uninstallAndroid()
+	}
 	switch installedMode() {
 	case "user":
 		exec.Command("systemctl", "--user", "disable", "--now", "shanframe").Run()
@@ -132,6 +150,9 @@ func UninstallService() error {
 }
 
 func ServiceDescription() string {
+	if android.Available() {
+		return "background process (Termux) with a boot script for Termux:Boot"
+	}
 	if installedMode() == "user" {
 		return "systemd user unit shanframe.service (no root; lingers across logout where allowed)"
 	}
@@ -140,6 +161,14 @@ func ServiceDescription() string {
 
 // RestartService relaunches the agent so config changes take effect.
 func RestartService() error {
+	if android.Available() {
+		exe, err := os.Executable()
+		if err != nil {
+			return err
+		}
+		home, _ := os.UserHomeDir()
+		return installAndroid(exe, filepath.Join(home, ".config", "shanframe", "serve.log"))
+	}
 	if installedMode() == "user" {
 		return exec.Command("systemctl", "--user", "--no-block", "restart", "shanframe").Run()
 	}

@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/shawnpana/shanframe/internal/android"
 )
 
 // cmdTimeout bounds every privileged command: a wedged systemctl on an
@@ -25,6 +27,9 @@ const wantWayvnc = "use_relative_paths=true\naddress=127.0.0.1\nenable_auth=fals
 // EnsureScreen makes wayvnc (Raspberry Pi OS / wlroots desktops) usable as a
 // shanframe screen target. Idempotent; safe to call on every start.
 func EnsureScreen() Screen {
+	if android.Available() {
+		return ensureAndroid()
+	}
 	if _, err := os.Stat(wayvncConf); err != nil {
 		if vncListening() {
 			return Screen{Ready: true}

@@ -23,6 +23,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/shawnpana/shanframe/internal/android"
 	"github.com/shawnpana/shanframe/internal/frame"
 	"github.com/shawnpana/shanframe/internal/peer"
 	"github.com/shawnpana/shanframe/internal/rendezvous"
@@ -35,6 +36,9 @@ import (
 var build = "dev"
 
 func main() {
+	android.FixNet()               // bare Android userland: resolver + CA store
+	android.StateDir = configDir() // the broker's port/token live with the config
+	android.Build = build
 	if err := newRootCmd().Execute(); err != nil {
 		var code exitCode
 		if errors.As(err, &code) {
@@ -55,6 +59,13 @@ func dispatch(argv []string) error {
 	switch argv[1] {
 	case update.ProbeArg: // update preflight: prove the binary starts, exit 0
 		return nil
+	case "_broker": // hidden: the shell-uid helper on Android (see internal/android)
+		port, token, perr := android.ParseBrokerArgs(argv[2:])
+		if perr != nil {
+			err = perr
+			break
+		}
+		err = android.RunBroker(port, token)
 	case "join":
 		server := "https://api.shanframe.com"
 		name := ""
@@ -101,6 +112,17 @@ func dispatch(argv []string) error {
 			usage()
 		}
 		err = rename(strings.Join(argv[2:], " "))
+	case "pair": // Android: trust this agent with the phone's own debugging channel
+		if len(argv) != 3 {
+			usage()
+		}
+		if !android.Available() {
+			err = errors.New("pair is for Android phones: it lets shanframe share this phone's screen")
+			break
+		}
+		if err = android.Pair(argv[2]); err == nil {
+			fmt.Println("paired: this phone can share its screen now")
+		}
 	case "startcmd": // startcmd <device> [value…|--clear]
 		if len(argv) < 3 {
 			usage()
@@ -115,7 +137,11 @@ func dispatch(argv []string) error {
 		if len(argv) < 4 {
 			usage()
 		}
-		err = run(argv[2], stripDashes(argv[3:]))
+		args, priv := argv[3:], false
+		if len(args) > 0 && args[0] == "--shell" { // Android: as the phone's shell user (adb-level)
+			args, priv = args[1:], true
+		}
+		err = run(argv[2], stripDashes(args), priv)
 	case "tunnels": // kept tunnels on this machine
 		ts := loadTunnels()
 		if len(ts) == 0 {
@@ -142,7 +168,11 @@ func dispatch(argv []string) error {
 			if len(rest) < 2 {
 				usage()
 			}
-			err = run(target, stripDashes(rest[1:]))
+			args, priv := rest[1:], false
+			if len(args) > 0 && args[0] == "--shell" { // Android: as the phone's shell user
+				args, priv = args[1:], true
+			}
+			err = run(target, stripDashes(args), priv)
 		case rest[0] == "tunnel":
 			if len(rest) < 2 {
 				usage()
@@ -224,6 +254,7 @@ func usage() {
   ls [--json]                        your devices (and what each offers)
   <device>                           shell on that device (name prefix works)
   <device> run -- <command>          run one command there; stdout/stderr/exit code pass through
+  <device> run --shell -- <command>  Android: run it as the phone's shell user (what adb shell gives: input, screencap, pm, uiautomator…)
   <device> tunnel <port>             local :port → that device's localhost:port (also lport:rport, lport:host:rport)
   <device> tunnel --socks <port>     local SOCKS5 proxy; connections exit from that device's network
       … --install | --uninstall      keep it: the background service listens from now on, connects on use
@@ -235,7 +266,8 @@ func usage() {
   <device> startcmd [CMD | --clear]  what every new terminal on it runs first (account-wide); no args shows it
   rm <device>                        remove a device from your list (offline only)
   rename <new-name>                  rename this machine
-  completion install|uninstall       tab completion for device names and verbs (bash/zsh/fish; up installs it)`)
+  completion install|uninstall       tab completion for device names and verbs (bash/zsh/fish; up installs it)
+  pair <code>                        Android: the code from Wireless debugging → "Pair device with pairing code"`)
 	os.Exit(2)
 }
 
@@ -560,7 +592,7 @@ func (e exitCode) Error() string { return fmt.Sprintf("exit %d", int(e)) }
 
 // run executes one command line on a device: stdout/stderr/exit code pass
 // through, stdin is piped when it isn't a terminal. ssh semantics for agents.
-func run(target string, args []string) error {
+func run(target string, args []string, priv bool) error {
 	c, cancel, err := newClient()
 	if err != nil {
 		return err
@@ -570,7 +602,7 @@ func run(target string, args []string) error {
 	if err != nil {
 		return err
 	}
-	s, done, err := c.open(dev, rendezvous.Open{Service: "exec", Cmd: strings.Join(args, " ")})
+	s, done, err := c.open(dev, rendezvous.Open{Service: "exec", Cmd: strings.Join(args, " "), Priv: priv})
 	if err != nil {
 		return err
 	}

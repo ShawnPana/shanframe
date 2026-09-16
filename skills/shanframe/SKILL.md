@@ -1,6 +1,6 @@
 ---
 name: shanframe
-description: Use the shanframe CLI to reach the user's other machines — run commands on them, forward ports / borrow their network, and see and operate their screens (macOS). Use whenever a task involves another device on the user's shanframe list.
+description: Use the shanframe CLI to reach the user's other machines — run commands on them, forward ports / borrow their network, and see and operate their screens (macOS, Android phones). Use whenever a task involves another device on the user's shanframe list; for a phone, read android.md next to this file.
 ---
 
 # shanframe — your other machines, from here
@@ -55,7 +55,7 @@ the far side). Use a plain port forward for things that can't use a proxy —
 e.g. Chrome DevTools: `shanframe mac tunnel 9222` then talk to localhost:9222.
 TCP only.
 
-## Look and act on a screen (macOS targets today)
+## Look and act on a screen (macOS and Android targets)
 
 Coordinates are points in the screenshot — what you see is what you click.
 
@@ -77,8 +77,10 @@ STEPS
 ```
 Loop: screenshot → decide → act → screenshot to verify. One verb is one
 session (~0.3–3 s); `batch` is the fast path. Each line of `batch` is a verb
-above plus `move X Y` and `sleep SECONDS`. Linux targets have no screen verbs
-yet (terminal only from the CLI); `ls --json` tells you.
+above plus `move X Y` and `sleep SECONDS`. Android phones take the same verbs
+(tap/swipe/type; `--right` = Back) — see **android.md** for the phone
+specifics and setup. Linux desktops have no screen verbs yet (terminal only
+from the CLI); `ls --json` tells you.
 
 ## Drive another machine's Chrome (CDP through a tunnel)
 
