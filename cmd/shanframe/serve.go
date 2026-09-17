@@ -51,6 +51,7 @@ var (
 )
 
 func serve() error {
+	peer.LogWriter = log.Writer()  // pion's internals go to the agent log, never a terminal
 	update.Guard(30 * time.Second) // confirm this build alive, or roll back
 	cfg, err := loadConfig()
 	if err != nil {

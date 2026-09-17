@@ -14,12 +14,23 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pion/logging"
 	"github.com/pion/webrtc/v4"
 	"github.com/shawnpana/shanframe/internal/rendezvous"
 )
 
+// LogWriter takes pion's own log lines (ICE, DTLS, TURN). Left discarded for
+// the CLI: pion prints straight to stderr, so "turnc ERROR: Fail to refresh
+// permissions" (a relay keep-alive that timed out after a sleep or a network
+// change — harmless for a direct session) landed as stray text inside whatever
+// was running in the user's terminal. serve points it at its log instead.
+var LogWriter io.Writer = io.Discard
+
 func api() *webrtc.API {
 	se := webrtc.SettingEngine{}
+	lf := logging.NewDefaultLoggerFactory()
+	lf.Writer = LogWriter
+	se.LoggerFactory = lf
 	se.DetachDataChannels() // gives us io.ReadWriteCloser per channel
 	// Real network interfaces only. VPN/tunnel/container interfaces (Tailscale
 	// utun*, docker bridges, …) otherwise become ICE candidates, and a session
