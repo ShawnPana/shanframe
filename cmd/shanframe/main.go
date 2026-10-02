@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -35,10 +36,15 @@ import (
 // build is stamped by scripts/release.sh (-X main.build=<git sha>).
 var build = "dev"
 
+// buildTime is when the release was cut (unix seconds, stamped by the release
+// script): the updater refuses a signed release older than this one.
+var buildTime = "0"
+
 func main() {
 	android.FixNet()               // bare Android userland: resolver + CA store
 	android.StateDir = configDir() // the broker's port/token live with the config
 	android.Build = build
+	update.BuildTime, _ = strconv.ParseInt(buildTime, 10, 64)
 	if err := newRootCmd().Execute(); err != nil {
 		var code exitCode
 		if errors.As(err, &code) {
@@ -185,13 +191,13 @@ func dispatch(argv []string) error {
 		case screenVerbs[rest[0]]:
 			err = screenVerb(target, rest[0], rest[1:])
 		default:
-			err = fmt.Errorf("unknown action %q for %s (actions: term, run, tunnel, cdp, screenshot, click, tap, drag, scroll, type, key, size, batch)", rest[0], target)
+			err = fmt.Errorf("unknown action %q for %s (actions: term, run, tunnel, cdp, screenshot, click, tap, drag, scroll, type, key, size, displays, batch)", rest[0], target)
 		}
 	}
 	return err
 }
 
-var screenVerbs = map[string]bool{"screenshot": true, "size": true, "click": true, "tap": true, "rightclick": true,
+var screenVerbs = map[string]bool{"screenshot": true, "size": true, "displays": true, "click": true, "tap": true, "rightclick": true,
 	"doubleclick": true, "dblclick": true, "middleclick": true, "drag": true, "swipe": true, "scroll": true, "move": true,
 	"type": true, "key": true, "batch": true}
 
@@ -262,6 +268,7 @@ func usage() {
   <device> screenshot [file|-]       one PNG of its screen (point coordinates), default screenshot.png
   <device> click|tap X Y [--right|--double]   drag X1 Y1 X2 Y2   scroll X Y DY   type TEXT   key cmd+shift+t
   <device> batch                     many of the above from stdin, one per line, over one connection
+  <device> displays                  its displays, numbered (main = 1); any screen verb takes --display N
   <device> cdp [--port N] [--local N]   its Chrome's DevTools as localhost here; prints CDP_WS/CDP_URL to use
   <device> startcmd [CMD | --clear]  what every new terminal on it runs first (account-wide); no args shows it
   rm <device>                        remove a device from your list (offline only)
@@ -368,11 +375,12 @@ func waitForReady() {
 
 // client is the CLI as a controller: one rendezvous connection, sessions on demand.
 type client struct {
-	cfg  Config
-	rz   *rendezvous.Client
-	ice  []rendezvous.ICEServer
-	devs chan []rendezvous.Device
-	sess map[string]func(rendezvous.Msg)
+	cfg     Config
+	rz      *rendezvous.Client
+	ice     []rendezvous.ICEServer
+	devs    chan []rendezvous.Device
+	sess    map[string]func(rendezvous.Msg)
+	refused chan string // the server's reason for refusing this machine as a controller
 }
 
 func newClient() (*client, context.CancelFunc, error) {
@@ -384,7 +392,7 @@ func newClientTimeout(wait time.Duration) (*client, context.CancelFunc, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	c := &client{cfg: cfg, devs: make(chan []rendezvous.Device, 1), sess: map[string]func(rendezvous.Msg){}}
+	c := &client{cfg: cfg, devs: make(chan []rendezvous.Device, 1), sess: map[string]func(rendezvous.Msg){}, refused: make(chan string, 1)}
 	unauth := make(chan struct{}, 1)
 	c.rz = &rendezvous.Client{URL: cfg.wsURL(), Token: cfg.Token,
 		Hello: rendezvous.Msg{T: "hello", Kind: rendezvous.KindClient}, OnMsg: c.onMsg,
@@ -398,6 +406,12 @@ func newClientTimeout(wait time.Duration) (*client, context.CancelFunc, error) {
 	case <-unauth:
 		cancel()
 		return nil, nil, rendezvous.ErrUnauthorized
+	case why := <-c.refused: // the server said no to this machine acting as a controller
+		cancel()
+		if strings.Contains(why, "target-only") {
+			os.Remove(deviceCachePath()) // nothing about the other machines stays here
+		}
+		return nil, nil, errors.New(why)
 	case <-time.After(wait):
 		cancel()
 		return nil, nil, fmt.Errorf("can't reach %s", cfg.Server)
@@ -412,6 +426,17 @@ func (c *client) onMsg(m rendezvous.Msg) {
 	case "devices":
 		select {
 		case c.devs <- m.Devices:
+		default:
+		}
+	case "error":
+		if m.Session != "" { // a session's own error goes to its handler
+			if h, ok := c.sess[m.Session]; ok {
+				h(m)
+			}
+			return
+		}
+		select {
+		case c.refused <- m.Error:
 		default:
 		}
 	default:
@@ -451,6 +476,9 @@ func ls(asJSON bool) error {
 				state += ", screen"
 			}
 		}
+		if d.TargetOnly {
+			state += ", one-way"
+		}
 		me := ""
 		if d.ID == c.cfg.DeviceID {
 			me = "  (this device)"
@@ -462,7 +490,12 @@ func ls(asJSON bool) error {
 		if d.Model != "" {
 			osCol += " · " + d.Model
 		}
-		fmt.Printf("%-16s %-40s %s%s\n", d.Name, osCol, state, me)
+		name := d.Name
+		if name == "" { // a granted one-way machine knows its targets by id only
+			name = d.ID
+			osCol = "reachable at " + grantList(d.Grants)
+		}
+		fmt.Printf("%-16s %-40s %s%s\n", name, osCol, state, me)
 	}
 	return nil
 }
@@ -479,7 +512,7 @@ func (c *client) open(dev *rendezvous.Device, open rendezvous.Open) (io.ReadWrit
 // openConn is open, also handing back the session for more streams (tunnels).
 func (c *client) openConn(dev *rendezvous.Device, open rendezvous.Open) (io.ReadWriteCloser, *peer.Conn, error) {
 	if !dev.Online {
-		return nil, nil, fmt.Errorf("%s is offline", dev.Name)
+		return nil, nil, fmt.Errorf("%s is offline", shown(dev))
 	}
 	session := fmt.Sprintf("cli-%d", time.Now().UnixNano())
 	ready := make(chan io.ReadWriteCloser, 1)
@@ -501,7 +534,9 @@ func (c *client) openConn(dev *rendezvous.Device, open rendezvous.Open) (io.Read
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := c.rz.Send(rendezvous.Msg{T: "offer", To: dev.ID, Session: session, SDP: offer}); err != nil {
+	// the offer names its service: the server logs it, and holds a granted
+	// one-way machine to tunnels only
+	if err := c.rz.Send(rendezvous.Msg{T: "offer", To: dev.ID, Session: session, SDP: offer, Open: &open}); err != nil {
 		conn.Close()
 		return nil, nil, err
 	}
@@ -510,7 +545,7 @@ func (c *client) openConn(dev *rendezvous.Device, open rendezvous.Open) (io.Read
 		return s, conn, nil
 	case <-time.After(20 * time.Second):
 		conn.Close()
-		return nil, nil, errors.New("could not connect to " + dev.Name)
+		return nil, nil, errors.New("could not connect to " + shown(dev))
 	}
 }
 

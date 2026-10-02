@@ -35,11 +35,23 @@ func Authorized() bool { return android.Ready() }
 // permission and setup reports it.
 func RequestPermission() bool { return false }
 
+// Displays is the phone's one screen, in its current orientation.
+func Displays() []Display {
+	if !android.Available() {
+		return nil
+	}
+	w, h := android.DisplaySize()
+	return []Display{{N: 1, Name: "Screen", W: float64(w), H: float64(h), Main: true}}
+}
+
 // Start captures the display, delivering encoded frames to cb from a reader
-// goroutine. maxDim caps the long side in pixels.
-func Start(maxDim, fps, bitrate int, cb func(Frame)) (*Session, error) {
+// goroutine. maxDim caps the long side in pixels. A phone has one display.
+func Start(display, maxDim, fps, bitrate int, cb func(Frame)) (*Session, error) {
 	if !android.Available() {
 		return nil, errors.New("native screen capture is not available on this platform")
+	}
+	if _, err := Pick(Displays(), display); err != nil {
+		return nil, err
 	}
 	s, err := android.StartStream(maxDim, fps, bitrate, func(data []byte, key bool, ptsMs int64) {
 		cb(Frame{Data: data, Key: key, PTSMs: ptsMs})
@@ -66,9 +78,12 @@ func (s *Session) Stop() {
 }
 
 // Still grabs one PNG of the display with its pixel size.
-func Still() ([]byte, int, int, error) {
+func Still(display int) ([]byte, int, int, error) {
 	if !android.Available() {
 		return nil, 0, 0, errors.New("no screen capture on this device")
+	}
+	if _, err := Pick(Displays(), display); err != nil {
+		return nil, 0, 0, err
 	}
 	return android.Screenshot()
 }

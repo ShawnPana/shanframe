@@ -1,7 +1,8 @@
 // Package update keeps every device on the newest agent by itself: the server
-// hosts one binary per os/arch; the agent compares the server's sha256 with
-// its own executable and, when they differ, downloads, verifies, swaps the
-// file in place and re-execs. No versions to bump, no redeploys by hand.
+// hosts one binary per os/arch with a signed manifest (signed.go); the agent
+// compares the signed sha256 with its own executable and, when they differ,
+// downloads, verifies, swaps the file in place and re-execs. No versions to
+// bump, no redeploys by hand — and nothing the server alone can forge.
 //
 // Safety: a broken build must never strand a device (a torn binary once
 // segfault-looped the Pi with nothing left to self-heal). Three layers:
@@ -80,28 +81,9 @@ func fileSHA(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// Check asks the server for the current sha of our artifact; "" if it has none.
-func Check(server, token, bin string) (string, error) {
-	req, _ := http.NewRequest("GET", server+"/v1/bin/"+Name(bin)+".sha256", nil)
-	req.Header.Set("Authorization", "Bearer "+token)
-	c := &http.Client{Timeout: 15 * time.Second}
-	resp, err := c.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusNotFound {
-		return "", nil
-	}
-	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("server said %s", resp.Status)
-	}
-	b, err := io.ReadAll(io.LimitReader(resp.Body, 128))
-	return strings.TrimSpace(string(b)), err
-}
-
-// Apply downloads the artifact, verifies it against want, replaces our own
-// executable and re-execs into it. Only returns on failure.
+// Apply downloads the artifact, verifies it against want (the sha256 from the
+// signed manifest), replaces our own executable and re-execs into it. Only
+// returns on failure.
 func Apply(server, token, bin, want string) error {
 	exe, err := os.Executable()
 	if err != nil {
@@ -228,6 +210,8 @@ func Restart() {
 	if err != nil {
 		return
 	}
+	// nothing but stdio crosses into the new image: see MarkCloseOnExec
+	log.Printf("restart: %d open descriptors, marked close-on-exec", MarkCloseOnExec())
 	syscall.Exec(exe, os.Args, os.Environ())
 }
 
@@ -276,11 +260,12 @@ func Loop(server, token, bin string, interval time.Duration, busy func() bool) {
 		}
 		mine, err := fileSHA(exe)
 		if err == nil {
-			want, err := Check(server, token, bin)
+			rel, err := Latest(server, token, bin)
 			if err != nil { // first dials to a sleepy LAN peer fail on ARP; try once more
 				time.Sleep(2 * time.Second)
-				want, err = Check(server, token, bin)
+				rel, err = Latest(server, token, bin)
 			}
+			want := rel.SHA256
 			if err != nil {
 				log.Printf("update: check: %v", err)
 				wait = 30 * time.Second // transient network trouble; try again soon

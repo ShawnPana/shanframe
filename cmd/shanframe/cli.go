@@ -25,9 +25,16 @@ var actionFlags = map[string][]string{
 	"tunnel":     {"--socks", "--install", "--uninstall"},
 	"cdp":        {"--port", "--local", "--json"},
 	"startcmd":   {"--clear"},
-	"screenshot": {"--json"},
-	"click":      {"--right", "--double"},
-	"tap":        {"--right", "--double"},
+	"screenshot": {"--json", "--display"},
+	"size":       {"--json", "--display"},
+	"displays":   {"--json"},
+	"click":      {"--right", "--double", "--display"},
+	"tap":        {"--right", "--double", "--display"},
+	"drag":       {"--display"},
+	"scroll":     {"--display"},
+	"type":       {"--display"},
+	"key":        {"--display"},
+	"batch":      {"--display"},
 }
 
 func actionNames() []string {
@@ -130,6 +137,10 @@ func deviceNames() []string {
 func names(devs []rendezvous.Device) []string {
 	out := make([]string, 0, len(devs))
 	for _, d := range devs {
+		if d.Name == "" { // a granted one-way machine knows its targets by id
+			out = append(out, d.ID)
+			continue
+		}
 		out = append(out, d.Name)
 	}
 	return out

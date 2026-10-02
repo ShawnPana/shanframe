@@ -16,8 +16,25 @@ func plistPath() string {
 }
 
 // InstallService registers `shanframe serve` as a per-user launchd agent that
-// starts at login and is kept alive.
+// starts at login and is kept alive. The agent runs as this user, so its
+// binary must live where this user can write, or it can never update itself
+// (install.sh puts it in root-owned /usr/local/bin; a Mac sat on a stale
+// build for a week that way).
 func InstallService(exe, logPath string) error {
+	owned, moved, err := OwnBinary(exe, filepath.Dir(logPath))
+	if err != nil {
+		return err
+	}
+	if moved {
+		fmt.Printf("agent binary: %s (a place it can update itself)\n", owned)
+		// keep the PATH name current when we can do it without asking
+		if exec.Command("sudo", "-n", "true").Run() == nil && exec.Command("sudo", "-n", "ln", "-sfn", owned, exe).Run() == nil {
+			fmt.Printf("  %s now points there, so the command stays current\n", exe)
+		} else {
+			fmt.Printf("  to keep `shanframe` on your PATH current: sudo ln -sfn %s %s\n", owned, exe)
+		}
+		exe = owned
+	}
 	plist := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
@@ -47,7 +64,6 @@ func InstallService(exe, logPath string) error {
 		return err
 	}
 	var out []byte
-	var err error
 	for i := 0; i < 5; i++ {
 		out, err = exec.Command("launchctl", "bootstrap", fmt.Sprintf("gui/%d", os.Getuid()), plistPath()).CombinedOutput()
 		if err == nil {
@@ -74,4 +90,7 @@ func RestartService() error {
 }
 
 // ServiceInstalled reports whether a service manager runs the agent here.
-func ServiceInstalled() bool { return false }
+func ServiceInstalled() bool {
+	_, err := os.Stat(plistPath())
+	return err == nil
+}

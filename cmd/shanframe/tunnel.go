@@ -78,6 +78,15 @@ func parseForwards(args []string) ([]forward, error) {
 	return out, nil
 }
 
+// shown is how a device is named in messages: its name, or — for a one-way
+// machine that only knows the id it was granted — that id.
+func shown(dev *rendezvous.Device) string {
+	if dev.Name == "" {
+		return dev.ID
+	}
+	return dev.Name
+}
+
 func tunnel(target string, args []string) error {
 	mode := ""
 	var rest []string
@@ -107,7 +116,7 @@ func tunnel(target string, args []string) error {
 		if err := saveTunnels(keep); err != nil {
 			return err
 		}
-		fmt.Fprintf(os.Stderr, "removed kept tunnels to %s\n", dev.Name)
+		fmt.Fprintf(os.Stderr, "removed kept tunnels to %s\n", shown(dev))
 		return setup.RestartService()
 	}
 	fwds, err := parseForwards(rest)
@@ -117,24 +126,25 @@ func tunnel(target string, args []string) error {
 	if mode == "--install" {
 		ts := loadTunnels()
 		found := false
+		keepAs := shown(dev)
 		for i := range ts {
 			if ts[i].Device == dev.Name || ts[i].Device == dev.ID {
-				ts[i].Device = dev.Name
+				ts[i].Device = keepAs
 				ts[i].Forwards = specsOf(fwds)
 				found = true
 			}
 		}
 		if !found {
-			ts = append(ts, keptTunnel{Device: dev.Name, Forwards: specsOf(fwds)})
+			ts = append(ts, keptTunnel{Device: keepAs, Forwards: specsOf(fwds)})
 		}
 		if err := saveTunnels(ts); err != nil {
 			return err
 		}
 		for _, f := range fwds {
 			if f.socks {
-				fmt.Fprintf(os.Stderr, "kept: socks5://localhost:%d → out through %s\n", f.local, dev.Name)
+				fmt.Fprintf(os.Stderr, "kept: socks5://localhost:%d → out through %s\n", f.local, shown(dev))
 			} else {
-				fmt.Fprintf(os.Stderr, "kept: localhost:%d → %s:%s:%d\n", f.local, dev.Name, f.host, f.remote)
+				fmt.Fprintf(os.Stderr, "kept: localhost:%d → %s:%s:%d\n", f.local, shown(dev), f.host, f.remote)
 			}
 		}
 		fmt.Fprintln(os.Stderr, "always on from now; connects to the device when something uses it")
@@ -155,11 +165,11 @@ func tunnel(target string, args []string) error {
 		}
 		listeners = append(listeners, ln)
 		if f.socks {
-			fmt.Fprintf(os.Stderr, "tunnel: socks5://localhost:%d → out through %s\n", f.local, dev.Name)
+			fmt.Fprintf(os.Stderr, "tunnel: socks5://localhost:%d → out through %s\n", f.local, shown(dev))
 		} else {
-			fmt.Fprintf(os.Stderr, "tunnel: localhost:%d → %s:%s:%d\n", f.local, dev.Name, f.host, f.remote)
+			fmt.Fprintf(os.Stderr, "tunnel: localhost:%d → %s:%s:%d\n", f.local, shown(dev), f.host, f.remote)
 		}
-		go serveForward(ln, f, func(h string, p int) (io.ReadWriteCloser, error) { return dialRemote(conn, h, p) }, dev.Name)
+		go serveForward(ln, f, func(h string, p int) (io.ReadWriteCloser, error) { return dialRemote(conn, h, p) }, shown(dev))
 	}
 	fmt.Fprintln(os.Stderr, "tunnel: ready (Ctrl-C to stop)")
 
@@ -173,7 +183,7 @@ func tunnel(target string, args []string) error {
 		for _, ln := range listeners {
 			ln.Close()
 		}
-		return fmt.Errorf("connection to %s closed", dev.Name)
+		return fmt.Errorf("connection to %s closed", shown(dev))
 	}
 	for _, ln := range listeners {
 		ln.Close()

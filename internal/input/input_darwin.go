@@ -20,11 +20,6 @@ static int sfAXTrusted(int prompt) {
 	return ok ? 1 : 0;
 }
 
-static void sfDisplaySize(double *w, double *h) {
-	CGRect b = CGDisplayBounds(CGMainDisplayID());
-	*w = b.size.width; *h = b.size.height;
-}
-
 static void sfMouse(int type, int btn, double x, double y, int clicks, uint64_t flags) {
 	CGEventRef e = CGEventCreateMouseEvent(NULL, (CGEventType)type,
 		CGPointMake(x, y), (CGMouseButton)btn);
@@ -73,9 +68,10 @@ import (
 // Injector is one remote controller's input state (modifiers, drag, clicks).
 type Injector struct {
 	mu                   sync.Mutex
+	disp                 Rect            // the display events are aimed at
 	mods                 map[string]bool // "cmd","ctrl","alt","shift"
 	buttons              int             // bitmask of pressed buttons: 1 left, 2 right, 4 middle
-	x, y                 float64         // current pointer, display points
+	x, y                 float64         // current pointer, global desktop points
 	lastDown             time.Time
 	lastBtn              int
 	lastDownX, lastDownY float64 // pointer at the previous button-down
@@ -91,18 +87,10 @@ func Authorized() bool { return C.sfAXTrusted(0) != 0 }
 // RequestPermission shows the macOS Accessibility prompt (once per app).
 func RequestPermission() { C.sfAXTrusted(1) }
 
-// DisplaySize is the main display in points — the coordinate space of
-// screenshots and of the positions input events are given in.
-func DisplaySize() (w, h float64) {
-	var cw, ch C.double
-	C.sfDisplaySize(&cw, &ch)
-	return float64(cw), float64(ch)
-}
-
-func New() *Injector {
-	var w, h C.double
-	C.sfDisplaySize(&w, &h)
-	return &Injector{mods: map[string]bool{}, x: float64(w) / 2, y: float64(h) / 2}
+// New makes an injector for the display at d; the pointer starts at its
+// centre.
+func New(d Rect) *Injector {
+	return &Injector{disp: d, mods: map[string]bool{}, x: d.X + d.W/2, y: d.Y + d.H/2}
 }
 
 func (in *Injector) flags() C.uint64_t {
@@ -122,14 +110,12 @@ func (in *Injector) flags() C.uint64_t {
 	return C.uint64_t(f)
 }
 
-// Move places the pointer at (nx, ny), normalized 0..1 over the main display.
+// Move places the pointer at (nx, ny), normalized 0..1 over the display.
 func (in *Injector) Move(nx, ny float64) {
 	in.mu.Lock()
 	defer in.mu.Unlock()
-	var w, h C.double
-	C.sfDisplaySize(&w, &h)
-	in.x = clamp01(nx) * float64(w)
-	in.y = clamp01(ny) * float64(h)
+	in.x = in.disp.X + clamp01(nx)*in.disp.W
+	in.y = in.disp.Y + clamp01(ny)*in.disp.H
 	typ, btn := C.int(5), C.int(0) // kCGEventMouseMoved
 	switch {
 	case in.buttons&1 != 0:

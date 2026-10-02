@@ -40,8 +40,9 @@ type agent struct {
 	asleep   bool   // macOS told us sleep is imminent
 	startCmd string // account setting, pushed by the server: typed into every new shell
 	ice      []rendezvous.ICEServer
-	conns    map[string]*peer.Conn // session → connection
-	stops    map[string]func()     // session → screen-capture teardown
+	conns    map[string]*peer.Conn                    // session → connection
+	stops    map[string]func()                        // session → screen-capture teardown
+	starts   map[string]func(screencap.Display) error // session → start its capture (once the screen stream names a display)
 }
 
 // osPretty and hwModel are collected once: cheap probes, stable answers.
@@ -57,7 +58,7 @@ func serve() error {
 	if err != nil {
 		return err
 	}
-	a := &agent{cfg: cfg, conns: map[string]*peer.Conn{}, stops: map[string]func(){}}
+	a := &agent{cfg: cfg, conns: map[string]*peer.Conn{}, stops: map[string]func(){}, starts: map[string]func(screencap.Display) error{}}
 	a.rz = &rendezvous.Client{URL: cfg.wsURL(), Token: cfg.Token, OnMsg: a.onMsg}
 	crash := lastCrash() // read before this run writes its own first line
 	a.rz.OnConnect = func() {
@@ -90,24 +91,38 @@ func serve() error {
 	}) {
 		log.Printf("watching sleep/wake")
 	}
+	// whatever the frameworks opened during setup stays out of children and
+	// of any re-exec (see update.MarkCloseOnExec)
+	update.MarkCloseOnExec()
 	go func() {
 		waiting := 0 // minutes spent waiting on a permission grant
 		for range time.Tick(time.Minute) {
-			if a.ensureReady() {
+			changed := a.ensureReady()
+			if changed {
 				a.rz.Send(rendezvous.Msg{T: "device", Device: a.device()})
 			}
-			// macOS only applies a Screen Recording grant at process start, so
-			// while unauthorized, re-exec every couple of minutes: the moment
-			// the user grants, readiness follows without a manual restart.
+			update.MarkCloseOnExec() // the permission probe may have opened something new
 			a.mu.Lock()
 			ready := a.screen.Ready
 			a.mu.Unlock()
-			if !ready && nativeScreen() && !a.busy() {
-				if waiting++; waiting >= 2 {
-					log.Printf("restarting to pick up permission changes")
+			switch {
+			case !nativeScreen() || a.busy():
+				continue
+			case ready && changed:
+				// macOS applies a Screen Recording grant to a process at its
+				// start: the probe says yes now, capture works after a re-exec
+				log.Printf("screen permission granted; restarting once to apply it")
+				update.Restart()
+			case !ready:
+				// a Mac that never gets the grant used to re-exec every two
+				// minutes for the life of the machine; the probe reads the
+				// grant live, so a slow safety re-exec is all that's needed
+				if waiting++; waiting >= 60 {
+					waiting = 0
+					log.Printf("still waiting on screen permission; restarting in case the grant isn't visible to this process")
 					update.Restart()
 				}
-			} else {
+			default:
 				waiting = 0
 			}
 		}
@@ -123,9 +138,10 @@ func serve() error {
 	}()
 	keepTunnels()
 	if os.Getenv("SHANFRAME_NO_UPDATE") == "" { // dev knob: run a local build without it being replaced
-		if runtime.GOOS == "linux" && !android.Available() && setup.ServiceInstalled() {
-			// a systemd-run agent whose binary sits somewhere it can't write
-			// (install.sh's /usr/local/bin) reinstalls itself from a place it can
+		if !android.Available() && setup.ServiceInstalled() {
+			// a service-run agent (systemd, launchd) whose binary sits somewhere
+			// it can't write (install.sh's /usr/local/bin) reinstalls itself
+			// from a place it can
 			logPath := filepath.Join(configDir(), "serve.log")
 			update.Relocate = func(exe string) error { return setup.InstallService(exe, logPath) }
 		}
@@ -205,8 +221,12 @@ func (a *agent) onMsg(m rendezvous.Msg) {
 	case "set": // per-device settings the server pushes (on connect and on change)
 		if v, ok := m.Set["startCmd"]; ok {
 			a.mu.Lock()
+			changed := a.startCmd != v
 			a.startCmd = v
 			a.mu.Unlock()
+			if changed { // it is typed into every new shell: never change silently
+				log.Printf("start command is now %q", v)
+			}
 		}
 	case "offer":
 		a.mu.Lock()
@@ -219,18 +239,54 @@ func (a *agent) onMsg(m rendezvous.Msg) {
 		var video func(*webrtc.PeerConnection) error
 		if nativeScreen() && screenReady {
 			video = func(pc *webrtc.PeerConnection) error {
-				stop, err := attachScreen(pc)
+				start, stop, err := attachScreen(pc)
 				if err != nil { // terminal and exec still work; the viewer shows no picture
 					log.Printf("session %s: screen: %v", session, err)
 					return nil
 				}
 				a.mu.Lock()
 				a.stops[session] = stop
+				a.starts[session] = start
 				a.mu.Unlock()
 				return nil
 			}
 		}
-		conn, answer, err := peer.Answer(ice, m.SDP, a.handleStream, video,
+		// who is calling, as the server vouches for it — so this machine's own
+		// log answers "who was here" without asking anyone
+		caller := "an unnamed caller"
+		if m.Caller != nil && m.Caller.Name == "" {
+			caller = "a controller on this account (names are withheld from a one-way machine)"
+		} else if m.Caller != nil {
+			caller = fmt.Sprintf("%q", m.Caller.Name)
+			if m.Caller.Kind == "agent" {
+				caller += " (another of your machines)"
+			}
+		}
+		// a one-way machine reaching through a grant: the server vouches for
+		// exactly what it may open here, and nothing else gets a stream —
+		// not a shell, not another port. This is the enforcement point:
+		// streams are end to end, so the server can't check them.
+		grants := m.Grants
+		if len(grants) > 0 {
+			caller += fmt.Sprintf(" (granted %s)", grantList(grants))
+			video = nil
+		}
+		log.Printf("session %s opened by %s", session, caller)
+		serve := func(open rendezvous.Open, s io.ReadWriteCloser) {
+			what := open.Service
+			if open.Service == "tcp" {
+				what = fmt.Sprintf("tcp to %s:%d", open.Host, open.Port)
+			}
+			if len(grants) > 0 && !grantAllows(grants, open) {
+				log.Printf("%s ← %s: REFUSED, beyond its grant", what, caller)
+				s.Write(append([]byte{1}, "not allowed: this device may only reach "+grantList(grants)...))
+				s.Close()
+				return
+			}
+			log.Printf("%s ← %s", what, caller)
+			a.handleStream(open, s, session)
+		}
+		conn, answer, err := peer.Answer(ice, m.SDP, serve, video,
 			func(cand string) { a.rz.Send(rendezvous.Msg{T: "ice", To: from, Session: session, Candidate: cand}) },
 			func() { a.closeSession(session) })
 		if err != nil {
@@ -264,6 +320,7 @@ func (a *agent) closeSession(session string) {
 	stop := a.stops[session]
 	delete(a.conns, session)
 	delete(a.stops, session)
+	delete(a.starts, session)
 	a.mu.Unlock()
 	if stop != nil {
 		stop()
@@ -274,11 +331,11 @@ func (a *agent) closeSession(session string) {
 }
 
 // handleStream serves one service over one DataChannel stream.
-func (a *agent) handleStream(open rendezvous.Open, s io.ReadWriteCloser) {
+func (a *agent) handleStream(open rendezvous.Open, s io.ReadWriteCloser, session string) {
 	defer s.Close()
 	switch open.Service {
 	case "info":
-		b, _ := json.Marshal(map[string]any{"screen": a.device()})
+		b, _ := json.Marshal(map[string]any{"screen": a.device(), "displays": screencap.Displays()})
 		frame.Write(s, frame.Data, b)
 		return
 	case "exec":
@@ -303,7 +360,7 @@ func (a *agent) handleStream(open rendezvous.Open, s io.ReadWriteCloser) {
 		}
 		log.Printf("shell ← closed")
 	case "screenshot": // one PNG: JSON header frame {w,h}, Data chunks, Exit
-		png, w, h, err := screencap.Still()
+		png, w, h, err := screencap.Still(open.Display)
 		if err != nil {
 			frame.Write(s, frame.Error, []byte(err.Error()))
 			return
@@ -319,7 +376,24 @@ func (a *agent) handleStream(open rendezvous.Open, s io.ReadWriteCloser) {
 		}
 		frame.Write(s, frame.Exit, []byte{0, 0, 0, 0})
 	case "screen":
-		if err := serveScreenInput(s); err != nil && err != io.EOF && !strings.Contains(err.Error(), "abort chunk") {
+		displays := screencap.Displays()
+		d, err := screencap.Pick(displays, open.Display)
+		if err != nil {
+			frame.Write(s, frame.Error, []byte(err.Error()))
+			return
+		}
+		a.mu.Lock()
+		start := a.starts[session] // nil when the session carries no video (CLI verbs)
+		delete(a.starts, session)
+		a.mu.Unlock()
+		if start != nil {
+			if err := start(d); err != nil {
+				log.Printf("screen: %v", err)
+				frame.Write(s, frame.Error, []byte(err.Error()))
+				return
+			}
+		}
+		if err := serveScreenInput(s, d, displays); err != nil && err != io.EOF && !strings.Contains(err.Error(), "abort chunk") {
 			log.Printf("screen input ended: %v", err)
 		}
 	case "vnc":

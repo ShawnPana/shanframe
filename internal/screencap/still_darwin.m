@@ -1,6 +1,6 @@
-// One still of the main display as PNG at point resolution (so the image's
-// pixel coordinates are the coordinates input events take), via
-// ScreenCaptureKit's screenshot API. Screen Recording permission covers it.
+// One still of a display as PNG at point resolution (so the image's pixel
+// coordinates are the coordinates input events take), via ScreenCaptureKit's
+// screenshot API. Screen Recording permission covers it.
 #import <Foundation/Foundation.h>
 #import <ScreenCaptureKit/ScreenCaptureKit.h>
 #import <CoreGraphics/CoreGraphics.h>
@@ -9,15 +9,17 @@
 #include <stdlib.h>
 #include <string.h>
 
-int sfStill(uint8_t **out, int *n, int *w, int *h) {
+SCDisplay *sfDisplayAt(NSArray<SCDisplay *> *displays, int n); // displays_darwin.m
+
+int sfStill(int displayN, uint8_t **out, int *n, int *w, int *h) {
 	__block CGImageRef img = NULL;
 	__block int pw = 0, ph = 0;
 	dispatch_semaphore_t sem = dispatch_semaphore_create(0);
 	[SCShareableContent getShareableContentExcludingDesktopWindows:NO onScreenWindowsOnly:YES
 		completionHandler:^(SCShareableContent *content, NSError *err) {
 		if (!content || content.displays.count == 0) { dispatch_semaphore_signal(sem); return; }
-		SCDisplay *d = content.displays.firstObject;
-		for (SCDisplay *x in content.displays) if (x.displayID == CGMainDisplayID()) d = x;
+		SCDisplay *d = sfDisplayAt(content.displays, displayN);
+		if (!d) { dispatch_semaphore_signal(sem); return; }
 		pw = (int)d.width; ph = (int)d.height; // points
 		SCContentFilter *f = [[SCContentFilter alloc] initWithDisplay:d excludingWindows:@[]];
 		SCStreamConfiguration *cfg = [SCStreamConfiguration new];

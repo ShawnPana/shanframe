@@ -190,7 +190,7 @@ func (k *keeper) open() (*peer.Conn, error) {
 		cancel()
 		return nil, err
 	}
-	log.Printf("kept tunnel: connected to %s", dev.Name)
+	log.Printf("kept tunnel: connected to %s", shown(dev))
 	k.conn, k.ctl, k.cancel = conn, ctl, cancel
 	go func() { // session ended underneath us → forget it; next use reconnects
 		io.Copy(io.Discard, ctl)
@@ -199,7 +199,7 @@ func (k *keeper) open() (*peer.Conn, error) {
 			k.conn = nil
 			conn.Close()
 			cancel()
-			log.Printf("kept tunnel: %s went away", dev.Name)
+			log.Printf("kept tunnel: %s went away", shown(dev))
 		}
 		k.mu.Unlock()
 	}()

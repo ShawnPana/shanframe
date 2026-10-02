@@ -17,11 +17,15 @@ func screencapDebug(args []string) error {
 		return fmt.Errorf("not supported on this platform")
 	}
 	if len(args) < 1 {
-		return fmt.Errorf("usage: shanframe _screencap out.h264 [seconds]")
+		return fmt.Errorf("usage: shanframe _screencap out.h264 [seconds] [display]")
 	}
 	secs := 3
 	if len(args) > 1 {
 		secs, _ = strconv.Atoi(args[1])
+	}
+	disp := 0 // which display (main = 1); see `displays`
+	if len(args) > 2 {
+		disp, _ = strconv.Atoi(args[2])
 	}
 	if !screencap.Authorized() {
 		fmt.Println("requesting Screen Recording permission…")
@@ -33,7 +37,7 @@ func screencapDebug(args []string) error {
 	}
 	defer f.Close()
 	frames, keys, bytes := 0, 0, 0
-	s, err := screencap.Start(1920, 30, 6_000_000, func(fr screencap.Frame) {
+	s, err := screencap.Start(disp, 1920, 30, 6_000_000, func(fr screencap.Frame) {
 		f.Write(fr.Data)
 		frames++
 		bytes += len(fr.Data)

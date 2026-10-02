@@ -25,20 +25,23 @@ import (
 // nativeScreen reports whether this device serves the native screen path.
 func nativeScreen() bool { return screencap.Supported() }
 
-// attachScreen adds a video track to pc and starts feeding it captured
-// frames of the display. Returns a stop func for session teardown.
-func attachScreen(pc *webrtc.PeerConnection) (func(), error) {
+// attachScreen adds a video track to pc. Capture starts when the controller
+// opens its `screen` stream — that is where it names the display — so the
+// track is silent until start runs. stop tears the capture down (fine before
+// start, fine twice).
+func attachScreen(pc *webrtc.PeerConnection) (start func(screencap.Display) error, stop func(), err error) {
 	track, err := webrtc.NewTrackLocalStaticSample(
 		webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264}, "screen", "shanframe")
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	sender, err := pc.AddTrack(track)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var mu sync.Mutex
 	var lastPTS int64
+	var sess *screencap.Session
 	onFrame := func(f screencap.Frame) {
 		mu.Lock()
 		d := time.Duration(f.PTSMs-lastPTS) * time.Millisecond
@@ -49,32 +52,52 @@ func attachScreen(pc *webrtc.PeerConnection) (func(), error) {
 		}
 		track.WriteSample(media.Sample{Data: f.Data, Duration: d})
 	}
-	sess, err := screencap.Start(1920, 30, 4_000_000, onFrame)
-	if err != nil {
-		return nil, err
-	}
-	log.Printf("screen → native %dx%d", sess.W, sess.H)
-	go func() { // viewers ask for a fresh keyframe after loss (PLI/FIR)
-		buf := make([]byte, 1500)
-		for {
-			n, _, err := sender.Read(buf)
-			if err != nil {
-				return
-			}
-			pkts, err := rtcp.Unmarshal(buf[:n])
-			if err != nil {
-				continue
-			}
-			for _, p := range pkts {
-				switch p.(type) {
-				case *rtcp.PictureLossIndication, *rtcp.FullIntraRequest:
-					sess.ForceKeyframe()
+	start = func(d screencap.Display) error {
+		mu.Lock()
+		defer mu.Unlock()
+		if sess != nil {
+			return nil
+		}
+		s, err := screencap.Start(d.N, 1920, 30, 4_000_000, onFrame)
+		if err != nil {
+			return err
+		}
+		sess = s
+		log.Printf("screen → native %dx%d (display %d, %s)", s.W, s.H, d.N, d.Name)
+		go func() { // viewers ask for a fresh keyframe after loss (PLI/FIR)
+			buf := make([]byte, 1500)
+			for {
+				n, _, err := sender.Read(buf)
+				if err != nil {
+					return
+				}
+				pkts, err := rtcp.Unmarshal(buf[:n])
+				if err != nil {
+					continue
+				}
+				for _, p := range pkts {
+					switch p.(type) {
+					case *rtcp.PictureLossIndication, *rtcp.FullIntraRequest:
+						s.ForceKeyframe()
+					}
 				}
 			}
-		}
-	}()
+		}()
+		return nil
+	}
 	var once sync.Once
-	return func() { once.Do(func() { sess.Stop(); log.Printf("screen ← native closed") }) }, nil
+	stop = func() {
+		once.Do(func() {
+			mu.Lock()
+			s := sess
+			mu.Unlock()
+			if s != nil {
+				s.Stop()
+				log.Printf("screen ← native closed")
+			}
+		})
+	}
+	return start, stop, nil
 }
 
 // screenEvent is one input message from the controller.
@@ -91,17 +114,18 @@ type screenEvent struct {
 }
 
 // serveScreenInput reads input events off the service stream and injects
-// them until the stream closes.
-func serveScreenInput(s io.ReadWriter) error {
+// them into display d until the stream closes. The ready message tells the
+// controller the display's size, which display it got, and what else there
+// is to switch to.
+func serveScreenInput(s io.ReadWriter, d screencap.Display, displays []screencap.Display) error {
 	if !input.Supported() || !input.Authorized() {
 		// not fatal: view-only is still useful; the page shows the note
 		note, _ := json.Marshal(map[string]string{"t": "noinput", "note": input.Note()})
 		frame.Write(s, frame.Data, note)
 	}
-	inj := input.New()
+	inj := input.New(input.Rect{X: d.X, Y: d.Y, W: d.W, H: d.H})
 	defer inj.ReleaseAll()
-	dw, dh := input.DisplaySize()
-	ready, _ := json.Marshal(map[string]any{"t": "ready", "w": dw, "h": dh})
+	ready, _ := json.Marshal(map[string]any{"t": "ready", "w": d.W, "h": d.H, "display": d.N, "displays": displays})
 	frame.Write(s, frame.Data, ready)
 	done := make(chan struct{})
 	defer close(done)

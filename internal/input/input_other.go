@@ -37,16 +37,9 @@ func Note() string {
 
 func RequestPermission() {}
 
-func New() *Injector { return &Injector{} }
-
-// DisplaySize is the screen's logical pixel size in its current orientation.
-func DisplaySize() (w, h float64) {
-	if !android.Available() {
-		return 0, 0
-	}
-	pw, ph := android.DisplaySize()
-	return float64(pw), float64(ph)
-}
+// New makes an injector; a phone has one screen, and touches are already
+// normalized to it, so the rect isn't needed here.
+func New(Rect) *Injector { return &Injector{} }
 
 // Move places the pointer at (nx, ny), normalized 0..1. A finger that is
 // down drags; a pointer that isn't only remembers where it is.

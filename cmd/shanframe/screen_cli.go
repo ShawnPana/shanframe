@@ -23,16 +23,27 @@ import (
 )
 
 type screenSession struct {
-	c      *client
-	dev    *rendezvous.Device
-	conn   *peer.Conn
-	s      io.ReadWriteCloser // "screen" stream: input events out, cursor/notes in
-	w, h   float64            // display size in points
-	done   func()
-	noteIn string
+	c        *client
+	dev      *rendezvous.Device
+	conn     *peer.Conn
+	s        io.ReadWriteCloser // "screen" stream: input events out, cursor/notes in
+	w, h     float64            // display size in points
+	display  int                // which display this session drives (1 = main)
+	displays []displayInfo      // everything the device has, as it numbers them
+	done     func()
+	noteIn   string
 }
 
-func openScreen(target string) (*screenSession, error) {
+// displayInfo is one entry of the ready message's display list.
+type displayInfo struct {
+	N    int     `json:"n"`
+	Name string  `json:"name"`
+	W    float64 `json:"w"`
+	H    float64 `json:"h"`
+	Main bool    `json:"main"`
+}
+
+func openScreen(target string, display int) (*screenSession, error) {
 	c, cancel, err := newClient()
 	if err != nil {
 		return nil, err
@@ -42,12 +53,12 @@ func openScreen(target string) (*screenSession, error) {
 		cancel()
 		return nil, err
 	}
-	s, conn, err := c.openConn(dev, rendezvous.Open{Service: "screen"})
+	s, conn, err := c.openConn(dev, rendezvous.Open{Service: "screen", Display: display})
 	if err != nil {
 		cancel()
 		return nil, err
 	}
-	ss := &screenSession{c: c, dev: dev, conn: conn, s: s, done: func() { s.Close(); conn.Close(); cancel() }}
+	ss := &screenSession{c: c, dev: dev, conn: conn, s: s, display: display, done: func() { s.Close(); conn.Close(); cancel() }}
 	// wait for {"t":"ready","w":…,"h":…}; everything after (cursor shapes) is ignored
 	deadline := time.After(10 * time.Second)
 	ready := make(chan error, 1)
@@ -63,10 +74,12 @@ func openScreen(target string) (*screenSession, error) {
 				return
 			}
 			var m struct {
-				T    string  `json:"t"`
-				W    float64 `json:"w"`
-				H    float64 `json:"h"`
-				Note string  `json:"note"`
+				T        string        `json:"t"`
+				W        float64       `json:"w"`
+				H        float64       `json:"h"`
+				Display  int           `json:"display"`
+				Displays []displayInfo `json:"displays"`
+				Note     string        `json:"note"`
 			}
 			if json.Unmarshal(p, &m) != nil {
 				continue
@@ -76,6 +89,10 @@ func openScreen(target string) (*screenSession, error) {
 				ss.noteIn = m.Note
 			case "ready":
 				ss.w, ss.h = m.W, m.H
+				if m.Display > 0 {
+					ss.display = m.Display
+				}
+				ss.displays = m.Displays
 				ready <- nil
 				go io.Copy(io.Discard, s) // drain cursor updates
 				return
@@ -192,7 +209,7 @@ func (ss *screenSession) key(combo string) error {
 
 // screenshot saves one PNG over a second stream on the same session.
 func (ss *screenSession) screenshot(path string) (w, h int, err error) {
-	s, err := ss.conn.Dial(rendezvous.Open{Service: "screenshot"}, 15*time.Second)
+	s, err := ss.conn.Dial(rendezvous.Open{Service: "screenshot", Display: ss.display}, 15*time.Second)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -235,7 +252,7 @@ func readScreenshot(s io.Reader, path string) (w, h int, err error) {
 }
 
 // screenshotOnly is the cheap path: one stream, no input session.
-func screenshotOnly(target, path string, asJSON bool) error {
+func screenshotOnly(target, path string, asJSON bool, display int) error {
 	c, cancel, err := newClient()
 	if err != nil {
 		return err
@@ -245,7 +262,7 @@ func screenshotOnly(target, path string, asJSON bool) error {
 	if err != nil {
 		return err
 	}
-	s, done, err := c.open(dev, rendezvous.Open{Service: "screenshot"})
+	s, done, err := c.open(dev, rendezvous.Open{Service: "screenshot", Display: display})
 	if err != nil {
 		return err
 	}
@@ -267,13 +284,30 @@ func report(asJSON bool, obj map[string]any, text string) {
 }
 
 // screenVerb runs one screen action; `batch` reads many from stdin.
+// `--display N` aims any of them at another display (as `displays` numbers
+// them); coordinates are then points on that display's screenshot.
 func screenVerb(target string, verb string, args []string) error {
-	asJSON := false
+	asJSON, display := false, 0
 	var rest []string
-	for _, a := range args {
-		if a == "--json" {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--json":
 			asJSON = true
-		} else {
+		case a == "--display" && i+1 < len(args):
+			i++
+			n, err := strconv.Atoi(args[i])
+			if err != nil || n < 1 {
+				return fmt.Errorf("--display takes a display number (see `displays`)")
+			}
+			display = n
+		case strings.HasPrefix(a, "--display="):
+			n, err := strconv.Atoi(strings.TrimPrefix(a, "--display="))
+			if err != nil || n < 1 {
+				return fmt.Errorf("--display takes a display number (see `displays`)")
+			}
+			display = n
+		default:
 			rest = append(rest, a)
 		}
 	}
@@ -282,15 +316,32 @@ func screenVerb(target string, verb string, args []string) error {
 		if len(rest) > 0 {
 			path = rest[0]
 		}
-		return screenshotOnly(target, path, asJSON)
+		return screenshotOnly(target, path, asJSON, display)
 	}
-	ss, err := openScreen(target)
+	ss, err := openScreen(target, display)
 	if err != nil {
 		return err
 	}
 	defer ss.done()
 	if verb == "size" {
-		report(asJSON, map[string]any{"w": ss.w, "h": ss.h}, fmt.Sprintf("%.0fx%.0f", ss.w, ss.h))
+		report(asJSON, map[string]any{"w": ss.w, "h": ss.h, "display": ss.display}, fmt.Sprintf("%.0fx%.0f", ss.w, ss.h))
+		return nil
+	}
+	if verb == "displays" {
+		if asJSON {
+			json.NewEncoder(os.Stdout).Encode(ss.displays)
+			return nil
+		}
+		if len(ss.displays) == 0 { // an agent from before displays were numbered
+			fmt.Println("1  main display (this device reports no display list)")
+		}
+		for _, d := range ss.displays {
+			main := ""
+			if d.Main {
+				main = "  (main)"
+			}
+			fmt.Printf("%d  %s  %.0fx%.0f%s\n", d.N, d.Name, d.W, d.H, main)
+		}
 		return nil
 	}
 	if verb == "batch" {

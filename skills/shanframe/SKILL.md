@@ -45,7 +45,11 @@ shanframe <dev> tunnel --socks 1080        # SOCKS5 proxy here; connections leav
 The command stays in the foreground while the tunnel is up (run it in the
 background, then use it). Add `--install` to keep a tunnel permanently: the
 background service listens from then on and connects on first use;
-`--uninstall` removes it; `shanframe tunnels` lists them. This is also how
+`--uninstall` removes it; `shanframe tunnels` lists them. On a one-way
+machine the CLI can do nothing — unless the owner granted it a port in the
+app: then `shanframe ls` shows the granted device by id with the ports it
+may reach, and `shanframe <id> tunnel <port> --install` is the only thing
+that works there (no shell, no run, no other port). This is also how
 you "host" an app for the whole list: run it on one machine, and on each
 machine that should see it, `shanframe <host> tunnel <port> --install` —
 `localhost:<port>` there is now that app (verified: a web app on a Mac,
@@ -62,6 +66,8 @@ Coordinates are points in the screenshot — what you see is what you click.
 ```sh
 shanframe <dev> screenshot shot.png [--json]   # {"file","w","h"}; also `-` for stdout
 shanframe <dev> size                            # e.g. 1512x982
+shanframe <dev> displays                        # a Mac with more than one: "1  Built-in Retina Display  1512x982  (main)" …
+shanframe <dev> screenshot --display 2 d2.png   # any screen verb takes --display N; coordinates are then points on that display
 shanframe <dev> click X Y [--right|--double]    # tap = click
 shanframe <dev> drag X1 Y1 X2 Y2
 shanframe <dev> scroll X Y DY                   # negative DY scrolls up; or X Y DX DY

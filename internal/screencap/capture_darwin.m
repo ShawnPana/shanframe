@@ -96,16 +96,16 @@ int sfRequest(void) { return CGRequestScreenCaptureAccess() ? 1 : 0; }
 static void *sfBegin(long goID, SCContentFilter *filter, SCStreamConfiguration *conf,
                      int w, int h, int fps, int bitrate);
 
-// sfStart begins capture of the main display. Returns a retained handle
-// (release with sfStop) or 0 on failure; *outW/*outH get the encoded size.
-void *sfStart(long goID, int maxDim, int fps, int bitrate, int *outW, int *outH) {
+SCDisplay *sfDisplayAt(NSArray<SCDisplay *> *displays, int n); // displays_darwin.m
+
+// sfStart begins capture of display number displayN (1 = main, see
+// displays_darwin.m). Returns a retained handle (release with sfStop) or 0 on
+// failure; *outW/*outH get the encoded size.
+void *sfStart(long goID, int displayN, int maxDim, int fps, int bitrate, int *outW, int *outH) {
     __block SCDisplay *display = nil;
     dispatch_semaphore_t sem = dispatch_semaphore_create(0);
     [SCShareableContent getShareableContentWithCompletionHandler:^(SCShareableContent *content, NSError *err) {
-        for (SCDisplay *d in content.displays) {
-            if (d.displayID == CGMainDisplayID()) { display = d; break; }
-        }
-        if (!display) display = content.displays.firstObject;
+        display = sfDisplayAt(content.displays, displayN);
         dispatch_semaphore_signal(sem);
     }];
     dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC));

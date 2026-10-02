@@ -8,18 +8,20 @@ package screencap
 
 /*
 #cgo CFLAGS: -x objective-c -fobjc-arc
-#cgo LDFLAGS: -framework Foundation -framework ScreenCaptureKit -framework VideoToolbox -framework CoreMedia -framework CoreVideo -framework CoreGraphics
+#cgo LDFLAGS: -framework Foundation -framework AppKit -framework ScreenCaptureKit -framework VideoToolbox -framework CoreMedia -framework CoreVideo -framework CoreGraphics
 #include <stdlib.h>
 #include <stdint.h>
 int sfPreflight(void);
 int sfRequest(void);
-void *sfStart(long goID, int maxDim, int fps, int bitrate, int *outW, int *outH);
+char *sfDisplaysJSON(void);
+void *sfStart(long goID, int displayN, int maxDim, int fps, int bitrate, int *outW, int *outH);
 void sfStop(void *handle);
 void sfForceKey(void *handle);
 */
 import "C"
 
 import (
+	"encoding/json"
 	"errors"
 	"sync"
 	"unsafe"
@@ -32,7 +34,7 @@ type Frame struct {
 	PTSMs int64
 }
 
-// Session is a running capture of the main display.
+// Session is a running capture of one display.
 type Session struct {
 	W, H   int
 	handle unsafe.Pointer
@@ -67,9 +69,22 @@ func Authorized() bool { return C.sfPreflight() != 0 }
 // returns whether access is (now) granted.
 func RequestPermission() bool { return C.sfRequest() != 0 }
 
-// Start captures the main display, delivering encoded frames to cb from a
-// capture thread. maxDim caps the long side in pixels.
-func Start(maxDim, fps, bitrate int, cb func(Frame)) (*Session, error) {
+// Displays lists the attached displays in display order (see Display).
+func Displays() []Display {
+	s := C.sfDisplaysJSON()
+	defer C.free(unsafe.Pointer(s))
+	var out []Display
+	json.Unmarshal([]byte(C.GoString(s)), &out)
+	return out
+}
+
+// Start captures display number `display` (0 or 1 = main), delivering
+// encoded frames to cb from a capture thread. maxDim caps the long side in
+// pixels.
+func Start(display, maxDim, fps, bitrate int, cb func(Frame)) (*Session, error) {
+	if _, err := Pick(Displays(), display); err != nil {
+		return nil, err
+	}
 	mu.Lock()
 	nextID++
 	id := nextID
@@ -77,7 +92,7 @@ func Start(maxDim, fps, bitrate int, cb func(Frame)) (*Session, error) {
 	mu.Unlock()
 
 	var w, h C.int
-	handle := C.sfStart(id, C.int(maxDim), C.int(fps), C.int(bitrate), &w, &h)
+	handle := C.sfStart(id, C.int(display), C.int(maxDim), C.int(fps), C.int(bitrate), &w, &h)
 	if handle == nil {
 		mu.Lock()
 		delete(sessions, id)
