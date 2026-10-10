@@ -393,7 +393,7 @@ func (a *agent) handleStream(open rendezvous.Open, s io.ReadWriteCloser, session
 				return
 			}
 		}
-		if err := serveScreenInput(s, d, displays); err != nil && err != io.EOF && !strings.Contains(err.Error(), "abort chunk") {
+		if err := serveScreenInput(s, d, displays, start); err != nil && err != io.EOF && !strings.Contains(err.Error(), "abort chunk") {
 			log.Printf("screen input ended: %v", err)
 		}
 	case "vnc":

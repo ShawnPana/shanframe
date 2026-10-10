@@ -41,6 +41,10 @@ func RequestPermission() {}
 // normalized to it, so the rect isn't needed here.
 func New(Rect) *Injector { return &Injector{} }
 
+// SetDisplay and Pos: a phone has one screen; the pointer is the last touch.
+func (in *Injector) SetDisplay(Rect)     {}
+func (in *Injector) Pos() (x, y float64) { return in.x, in.y }
+
 // Move places the pointer at (nx, ny), normalized 0..1. A finger that is
 // down drags; a pointer that isn't only remembers where it is.
 func (in *Injector) Move(nx, ny float64) {

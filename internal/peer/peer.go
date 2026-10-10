@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"github.com/shawnpana/shanframe/internal/android"
 	"io"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +26,23 @@ import (
 // change — harmless for a direct session) landed as stray text inside whatever
 // was running in the user's terminal. serve points it at its log instead.
 var LogWriter io.Writer = io.Discard
+
+// Debug reports whether SHANFRAME_PEER_LOG is set: pion's own log then goes
+// to stderr (set PION_LOG_DEBUG=ice,pc for the level) and every connection
+// state change is printed — how to see why a session didn't come up.
+var Debug = os.Getenv("SHANFRAME_PEER_LOG") != ""
+
+func init() {
+	if Debug {
+		LogWriter = os.Stderr
+	}
+}
+
+func debugf(format string, args ...any) {
+	if Debug {
+		fmt.Fprintf(os.Stderr, "peer: "+format+"\n", args...)
+	}
+}
 
 func api() *webrtc.API {
 	se := webrtc.SettingEngine{}
@@ -172,10 +190,20 @@ func Offer(ice []rendezvous.ICEServer, open rendezvous.Open, onCandidate func(st
 		if cand == nil {
 			return
 		}
+		debugf("local candidate %s", cand.String())
 		b, _ := json.Marshal(cand.ToJSON())
 		onCandidate(string(b))
 	})
+	pc.OnICEConnectionStateChange(func(st webrtc.ICEConnectionState) { debugf("ice %s", st) })
 	pc.OnConnectionStateChange(func(st webrtc.PeerConnectionState) {
+		debugf("connection %s", st)
+		if Debug && st == webrtc.PeerConnectionStateConnected {
+			if t := pc.SCTP().Transport().ICETransport(); t != nil {
+				if pair, err := t.GetSelectedCandidatePair(); err == nil && pair != nil {
+					debugf("selected pair: local %s ↔ remote %s", pair.Local, pair.Remote)
+				}
+			}
+		}
 		if st == webrtc.PeerConnectionStateFailed || st == webrtc.PeerConnectionStateClosed || st == webrtc.PeerConnectionStateDisconnected {
 			if onClosed != nil {
 				onClosed()

@@ -110,12 +110,29 @@ func (in *Injector) flags() C.uint64_t {
 	return C.uint64_t(f)
 }
 
-// Move places the pointer at (nx, ny), normalized 0..1 over the display.
+// SetDisplay aims later events at another display (the controller crossed
+// an edge); the pointer itself stays where it is.
+func (in *Injector) SetDisplay(d Rect) {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	in.disp = d
+}
+
+// Pos is the pointer in global desktop points.
+func (in *Injector) Pos() (x, y float64) {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	return in.x, in.y
+}
+
+// Move places the pointer at (nx, ny), normalized over the display — not
+// clamped: a little past an edge is how the pointer reaches the display next
+// door (macOS keeps it on some screen).
 func (in *Injector) Move(nx, ny float64) {
 	in.mu.Lock()
 	defer in.mu.Unlock()
-	in.x = in.disp.X + clamp01(nx)*in.disp.W
-	in.y = in.disp.Y + clamp01(ny)*in.disp.H
+	in.x = in.disp.X + nx*in.disp.W
+	in.y = in.disp.Y + ny*in.disp.H
 	typ, btn := C.int(5), C.int(0) // kCGEventMouseMoved
 	switch {
 	case in.buttons&1 != 0:
@@ -181,6 +198,21 @@ var keycodes = map[string]int{
 
 var modOf = map[string]string{"Meta": "cmd", "Shift": "shift", "Alt": "alt", "Control": "ctrl"}
 
+// keyFlags are the flags a real keyboard puts on a key beyond the held
+// modifiers: arrows and the navigation keys carry Fn (and arrows the numeric
+// pad bit). macOS matches its own shortcuts against the full flags —
+// Mission Control is literally ⌃+Fn+↑ — so without these the Dock never
+// sees ⌃↑, ⌃←/→ or Exposé, though apps still get the arrow.
+var keyFlags = map[string]uint64{
+	"ArrowLeft": fnFlag | padFlag, "ArrowRight": fnFlag | padFlag, "ArrowDown": fnFlag | padFlag, "ArrowUp": fnFlag | padFlag,
+	"Home": fnFlag, "End": fnFlag, "PageUp": fnFlag, "PageDown": fnFlag, "Delete": fnFlag,
+}
+
+const (
+	fnFlag  = 1 << 23 // kCGEventFlagMaskSecondaryFn
+	padFlag = 1 << 21 // kCGEventFlagMaskNumericPad
+)
+
 // Key presses or releases a named key ("Enter", "ArrowUp", "Meta", …).
 // Modifiers stick until released and flag every other event.
 func (in *Injector) Key(name string, down bool) {
@@ -198,7 +230,7 @@ func (in *Injector) Key(name string, down bool) {
 		}
 		return
 	}
-	C.sfKey(C.int(code), C.int(b2i(down)), in.flags())
+	C.sfKey(C.int(code), C.int(b2i(down)), in.flags()|C.uint64_t(keyFlags[name]))
 }
 
 // Text types a string (unicode, layout-independent). Modifier-carrying

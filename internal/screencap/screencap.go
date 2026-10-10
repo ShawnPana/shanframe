@@ -19,6 +19,16 @@ type Display struct {
 
 // Pick resolves a controller's display number against the list. 0 means the
 // main display; a number the device doesn't have is an error in plain words.
+// At is the display whose area holds the global point (x, y), if any.
+func At(displays []Display, x, y float64) (Display, bool) {
+	for _, d := range displays {
+		if x >= d.X && x < d.X+d.W && y >= d.Y && y < d.Y+d.H {
+			return d, true
+		}
+	}
+	return Display{}, false
+}
+
 func Pick(displays []Display, n int) (Display, error) {
 	if n <= 0 {
 		n = 1
